@@ -57,12 +57,20 @@ unordered_map<string, Opcode> opcodeMap = {
     {"HALT", HALT}
 };
 
-char mapChar(int value) {
-    return symbolMap[value];
+char mapSymbol(int code) {
+    if (symbolMap.find(code) != symbolMap.end()) {
+        return symbolMap[code];
+    } else {
+        throw runtime_error("Invalid symbol code: " + code);
+    };
 };
 
 Opcode mapOpcode(const string& token) {
-    return opcodeMap[token];
+    if (opcodeMap.find(token) != opcodeMap.end()) {
+        return opcodeMap[token];
+    } else {
+        throw runtime_error("Invalid opcode: " + token);
+    };
 };
 
 bool isInstruction(const string& line) {
@@ -74,7 +82,7 @@ bool isInstruction(const string& line) {
 };
 
 bool isBranch(const string& line) {
-    return (line.back() == ':');
+    return (line.size() != 0 && line.back() == ':');
 };
 
 bool parseBranch(unordered_map<string, int>& branchMap, const string& token, int lineNumber) {
@@ -199,8 +207,8 @@ int main() {
     }
 
     int pc = 0;
-    vector<int> memory[256];
-    vector<int> registers[10];
+    vector<int> memory(256);
+    vector<int> registers(10);
 
     while (pc != -1 && pc != instructions.size()) {
         executeInstruction(instructions[pc], pc);
