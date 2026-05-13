@@ -1,5 +1,7 @@
 #include <iostream>
 
+#include <stdexcept>
+
 #include <unordered_map>
 #include <sstream>
 #include <fstream>
@@ -10,12 +12,14 @@ using namespace std;
 enum ArgumentType {
     ADDRESS,
     REGISTER,
-    IMMEDIATE
+    IMMEDIATE,
+    LABEL
 };
 
 struct Argument {
     ArgumentType type;
     int value;
+    string label;
 };
 
 enum Opcode {
@@ -26,17 +30,13 @@ enum Opcode {
     BEQ,
     BGT,
     BLT,
-    B
+    B,
+    HALT
 };
 
 struct Instruction {
     Opcode op;
     vector<Argument> args;
-};
-
-struct Branch {
-    string name;
-    int position;
 };
 
 unordered_map<int, char> symbolMap = {
@@ -53,7 +53,8 @@ unordered_map<string, Opcode> opcodeMap = {
     {"BEQ", BEQ},
     {"BGT", BGT},
     {"BLT", BLT},
-    {"B", B}
+    {"B", B},
+    {"HALT", HALT}
 };
 
 char mapChar(int value) {
@@ -64,9 +65,31 @@ Opcode mapOpcode(const string& token) {
     return opcodeMap[token];
 };
 
-Argument parseArgument(const string& token) {
-    Argument arg;
-    
+bool isInstruction(const string& line) {
+    istringstream iss(line);
+    string token;
+    iss >> token;
+
+    return opcodeMap.find(token) != opcodeMap.end();
+};
+
+bool isBranch(const string& line) {
+    return (line.back() == ':');
+};
+
+bool parseBranch(unordered_map<string, int>& branchMap, const string& token, int lineNumber) {
+    string branchName = token.substr(0, token.size() - 1);
+
+    if (branchName.size() > 0) {
+        branchMap[branchName] = lineNumber;
+    } else {
+        return false;
+    }
+
+    return true;
+}
+
+bool parseArgument(Argument& arg, const string& token) {
     ArgumentType type;
     string cleanToken = token;
 
@@ -82,44 +105,106 @@ Argument parseArgument(const string& token) {
             break;
 
         default:
+            if (isalpha(token[0])) {
+                type = LABEL;
+                arg.type = type;
+                arg.label = token;
+                return true;
+            };
+
             type = ADDRESS;
             break;
     }
 
-    int value = stoi(cleanToken);
+    if (cleanToken.size() == 0) {
+        cout << "Empty argument" << "\n";
+        return false;
+    }
+
+    int value;
+    try {
+        value = stoi(cleanToken);
+    } catch (...) {
+        cout << "Non integer argument" << "\n";
+        return false;
+    }
 
     arg.type = type;
     arg.value = value;
 
-    return arg;
+    return true;
 };
 
-Instruction parseLine(const string& line) {
-    Instruction result;
-    
+bool parseInstruction(Instruction& inst, const string& line) {
     istringstream iss(line);
     string token;
     iss >> token;
 
-    result.op = mapOpcode(token);
+    inst.op = mapOpcode(token);
 
     while (iss >> token) {
-        result.args.push_back(parseArgument(token));
+        Argument arg;
+        if (parseArgument(arg, token)) {
+            inst.args.push_back(arg);
+        } else {
+            cout << "Invalid argument: " << token << "\n";
+            return false;
+        }
     };
+
+    return true;
 };
 
-void main() {
+void executeInstruction(const Instruction& inst, int& pc) {
+    switch (inst.op) {
+        default:
+            pc++;
+    }
+};
+
+int main() {
     string fileName;
 
     cout << "Enter file name: ";
     cin >> fileName;
 
     vector<Instruction> instructions;
+    unordered_map<string, int> branchMap;
 
     ifstream programFile(fileName);
 
     string programLine;
+    int lineNumber = 0;
     while (getline(programFile, programLine)) {
-        instructions.push_back(parseLine(programLine));
+        if (programLine.size() == 0) {
+            cout << "Line" << lineNumber << " is empty" << "\n";
+        } else if (isInstruction(programLine)) {
+            Instruction inst;
+
+            if (parseInstruction(inst, programLine)) {
+                instructions.push_back(move(inst));
+            } else {
+                cout << "Instruction on line " << lineNumber << " is invalid: " << programLine << "\n";
+            };
+            
+        } else if (isBranch(programLine)) {
+            if (!parseBranch(branchMap, programLine, lineNumber)) {
+                cout << "Branch on line " << lineNumber << " is invalid: " << programLine << "\n";
+            };
+        } else {
+            cout << "Line" << lineNumber << "not recognised as instruction or branch: " << programLine << "\n";
+        }
+
+        lineNumber++;
     }
+
+    int pc = 0;
+    vector<int> memory[256];
+    vector<int> registers[10];
+
+    while (pc != -1 && pc != instructions.size()) {
+        executeInstruction(instructions[pc], pc);
+    }
+
+    return 0;
 };
