@@ -58,38 +58,52 @@ unordered_map<string, Opcode> opcodeMap = {
 };
 
 char mapSymbol(int code) {
-    if (symbolMap.find(code) != symbolMap.end()) {
-        return symbolMap[code];
+    auto it = symbolMap.find(code);
+
+    if (it != symbolMap.end()) {
+        return it->second;
     } else {
-        throw runtime_error("Invalid symbol code: " + code);
-    };
+        throw runtime_error("Invalid symbol code: " + to_string(code));
+    }
 };
 
 Opcode mapOpcode(const string& token) {
-    if (opcodeMap.find(token) != opcodeMap.end()) {
-        return opcodeMap[token];
+    auto it = opcodeMap.find(token);
+
+    if (it != opcodeMap.end()) {
+        return it->second;
     } else {
         throw runtime_error("Invalid opcode: " + token);
-    };
+    }
 };
 
 bool isInstruction(const string& line) {
     istringstream iss(line);
     string token;
-    iss >> token;
 
-    return opcodeMap.find(token) != opcodeMap.end();
+    if (iss >> token) {
+        return opcodeMap.find(token) != opcodeMap.end();
+    } else {
+        return false;
+    }  
 };
 
 bool isBranch(const string& line) {
-    return (line.size() != 0 && line.back() == ':');
+    istringstream iss(line);
+    string token;
+
+    if (iss >> token) {
+        return token.back() == ':';
+    } else {
+        return false;
+    } 
 };
 
-bool parseBranch(unordered_map<string, int>& branchMap, const string& token, int lineNumber) {
+bool parseBranch(unordered_map<string, int>& branchMap, const string& token, int instructionNumber) {
     string branchName = token.substr(0, token.size() - 1);
 
     if (branchName.size() > 0) {
-        branchMap[branchName] = lineNumber;
+        branchMap[branchName] = instructionNumber;
     } else {
         return false;
     }
@@ -118,7 +132,7 @@ bool parseArgument(Argument& arg, const string& token) {
                 arg.type = type;
                 arg.label = token;
                 return true;
-            };
+            }
 
             type = ADDRESS;
             break;
@@ -152,6 +166,11 @@ bool parseInstruction(Instruction& inst, const string& line) {
 
     while (iss >> token) {
         Argument arg;
+
+        if (!token.empty() && token.back() == ',') {
+            token.pop_back();
+        }
+
         if (parseArgument(arg, token)) {
             inst.args.push_back(arg);
         } else {
@@ -183,6 +202,7 @@ int main() {
 
     string programLine;
     int lineNumber = 0;
+    int instructionNumber = 0;
     while (getline(programFile, programLine)) {
         if (programLine.size() == 0) {
             cout << "Line" << lineNumber << " is empty" << "\n";
@@ -191,14 +211,15 @@ int main() {
 
             if (parseInstruction(inst, programLine)) {
                 instructions.push_back(move(inst));
+                instructionNumber++;
             } else {
                 cout << "Instruction on line " << lineNumber << " is invalid: " << programLine << "\n";
             };
             
         } else if (isBranch(programLine)) {
-            if (!parseBranch(branchMap, programLine, lineNumber)) {
+            if (!parseBranch(branchMap, programLine, instructionNumber)) {
                 cout << "Branch on line " << lineNumber << " is invalid: " << programLine << "\n";
-            };
+            }
         } else {
             cout << "Line" << lineNumber << "not recognised as instruction or branch: " << programLine << "\n";
         }
