@@ -11,8 +11,12 @@
 
 using namespace std;
 
-const int FRAME_WIDTH = 20;
-const int FRAME_HEIGHT = 10;
+const int MEMORY_SIZE = 1024;
+const int REGISTER_COUNT = 20;
+
+const int FRAME_WIDTH = 100;
+const int FRAME_HEIGHT = 30;
+const int FRAME_BUFFER_SIZE = FRAME_HEIGHT * FRAME_WIDTH;
 
 enum ArgumentType {
     ADDRESS,
@@ -45,6 +49,7 @@ enum Opcode {
     CMP,
     B,
     BEQ,
+    BNE,
     BGT,
     BLT,
     FLUSH,
@@ -60,7 +65,17 @@ struct Instruction {
 unordered_map<int, char> symbolMap = {
     {0, ' '},
     {1, '|'},
-    {2, 'O'}
+    {2, 'O'},
+    {3, '0'},
+    {4, '1'},
+    {5, '2'},
+    {6, '3'},
+    {7, '4'},
+    {8, '5'},
+    {9, '6'},
+    {10, '7'},
+    {11, '8'},
+    {12, '9'}
 };
 
 unordered_map<string, Opcode> opcodeMap = {
@@ -75,6 +90,7 @@ unordered_map<string, Opcode> opcodeMap = {
     {"CMP", CMP},
     {"B", B},
     {"BEQ", BEQ},
+    {"BNE", BNE},
     {"BGT", BGT},
     {"BLT", BLT},
     {"FLUSH", FLUSH},
@@ -259,16 +275,16 @@ bool store(CPU& cpu, const Argument& target, const Argument& source) {
     }
 
     if (target.type == REGISTER) {
-        if (target.value <= 10) {
+        if (target.value < REGISTER_COUNT) {
             cpu.registers[target.value] = value;
         } else {
             return false;
         }
     } else if (target.type == ADDRESS) {
-        if (target.value <= 256) {
+        if (target.value < MEMORY_SIZE) {
             cpu.memory[target.value] = value;
-        } else if (target.value <= 456) {
-            cpu.framebuffer[target.value - 256] = value;
+        } else if (target.value < MEMORY_SIZE + FRAME_BUFFER_SIZE) {
+            cpu.framebuffer[target.value - MEMORY_SIZE] = value;
         } else {
             return false;
         }
@@ -354,6 +370,8 @@ bool compare(CPU& cpu, const Argument& operand1, const Argument& operand2) {
 
 bool flushFrame(const CPU& cpu) {
     string frame;
+    
+    cout << "\033[H\033[2J";
 
     for (int i = 0; i < cpu.framebuffer.size(); i++) {
         int code = cpu.framebuffer[i];
@@ -371,6 +389,8 @@ bool flushFrame(const CPU& cpu) {
         }
     }
 
+    cout << frame << endl;
+
     return true;
 }
 
@@ -379,47 +399,49 @@ bool executeInstruction(CPU& cpu, const Instruction& inst) {
     bool incrementPC = true;
 
     switch (inst.op) {
-        case LDR:
+        case LDR: {
             if (inst.args.size() < 2) {
                 ok = false;
                 cout << "Not enough arguments for load register operation" << "\n";
                 break;
             }
 
-            if (inst.args[1].type != ADDRESS) {
-                ok = false;
-                cout << "Memory address not provided to load register operation" << "\n";
-                break;
+            Argument sourceAddress = inst.args[1];
+            if (inst.args[1].type == REGISTER) {
+                sourceAddress.type = ADDRESS;
+                getValue(cpu, inst.args[1], sourceAddress.value);
             }
 
-            ok = store(cpu, inst.args[0], inst.args[1]);
+            ok = store(cpu, inst.args[0], sourceAddress);
 
             if (!ok) {
                 cout << "Load register operation failed" << "\n";
             }
 
             break;
+        }
 
-        case STR:
+        case STR: {
             if (inst.args.size() < 2) {
                 ok = false;
                 cout << "Not enough arguments for store register operation" << "\n";
                 break;
             }
 
-            if (inst.args[1].type != ADDRESS) {
-                ok = false;
-                cout << "Memory address not provided to store register operation" << "\n";
-                break;
+            Argument targetAddress = inst.args[1];
+            if (inst.args[1].type == REGISTER) {
+                targetAddress.type = ADDRESS;
+                getValue(cpu, inst.args[1], targetAddress.value);
             }
 
-            ok = store(cpu, inst.args[1], inst.args[0]);
+            ok = store(cpu, targetAddress, inst.args[0]);
 
             if (!ok)  {
                 cout << "Store register operation failed" << "\n";
             }
 
             break;
+        }
 
         case MOV:
             if (inst.args.size() < 2) {
@@ -521,7 +543,7 @@ bool executeInstruction(CPU& cpu, const Instruction& inst) {
                 break;
             }
 
-            ok = add(cpu, inst.args[0], inst.args[1], inst.args[2], 1);
+            ok = multiply(cpu, inst.args[0], inst.args[1], inst.args[2]);
 
             if (!ok)  {
                 cout << "Multiply operation failed" << "\n";
@@ -649,6 +671,28 @@ bool executeInstruction(CPU& cpu, const Instruction& inst) {
 
             break;
 
+        case BNE:
+            if (inst.args.size() < 1) {
+                ok = false;
+                cout << "Not enough arguments for branch operation" << "\n";
+                break;
+            }
+
+            if (cpu.flags.equal) {
+                ok = true;
+                break;
+            }
+
+            ok = branch(cpu, inst.args[0]);
+
+            if (ok) {
+                incrementPC = false;
+            } else {
+                cout << "Branch failed" << "\n";
+            }
+
+            break;
+
         case BGT:
             if (inst.args.size() < 1) {
                 ok = false;
@@ -694,6 +738,7 @@ bool executeInstruction(CPU& cpu, const Instruction& inst) {
             break;
         
         case FLUSH:
+            cout << "Flush" << endl;
             ok = flushFrame(cpu);
 
             if (!ok) {
@@ -718,6 +763,7 @@ bool executeInstruction(CPU& cpu, const Instruction& inst) {
             }
 
             this_thread::sleep_for(chrono::milliseconds(delay));
+            ok = true;
 
             if (!ok) {
                 cout << "Wait failed" << "\n";
@@ -747,9 +793,9 @@ int main() {
     cin >> fileName;
 
     CPU cpu;
-    cpu.memory = vector<int>(256),
-    cpu.framebuffer = vector<int>(FRAME_WIDTH * FRAME_HEIGHT),
-    cpu.registers = vector<int>(10),
+    cpu.memory = vector<int>(MEMORY_SIZE);
+    cpu.framebuffer = vector<int>(FRAME_BUFFER_SIZE);
+    cpu.registers = vector<int>(REGISTER_COUNT);
     cpu.pc = 0;
 
     vector<Instruction> instructions;
