@@ -22,15 +22,24 @@ struct Argument {
     string label;
 };
 
+struct Flags {
+    bool equal;
+    bool greater;
+    bool less;
+};
+
 enum Opcode {
-    LOAD,
-    STORE,
+    LDR,
+    STR,
+    MOV,
     ADD,
     SUB,
+    LSL,
+    LSR,
+    B,
     BEQ,
     BGT,
     BLT,
-    B,
     HALT
 };
 
@@ -46,15 +55,27 @@ unordered_map<int, char> symbolMap = {
 };
 
 unordered_map<string, Opcode> opcodeMap = {
-    {"LOAD", LOAD},
-    {"STORE", STORE},
+    {"LDR", LDR},
+    {"STR", STR},
+    {"MOV", MOV},
     {"ADD", ADD},
     {"SUB", SUB},
+    {"LSL", LSL},
+    {"LSR", LSR},
+    {"B", B},
     {"BEQ", BEQ},
     {"BGT", BGT},
     {"BLT", BLT},
-    {"B", B},
     {"HALT", HALT}
+};
+
+struct CPU {
+    vector<int> memory;
+    vector<int> registers;
+    Flags flags;
+    int pc;
+
+    unordered_map<string, int> branchMap;
 };
 
 char mapSymbol(int code) {
@@ -182,12 +203,70 @@ bool parseInstruction(Instruction& inst, const string& line) {
     return true;
 };
 
-void executeInstruction(const Instruction& inst, int& pc) {
-    switch (inst.op) {
-        default:
-            pc++;
+bool branch(CPU& cpu, const Argument& arg) {
+    if (!arg.label.empty()) {
+        auto it = cpu.branchMap.find(arg.label);
+
+        if (it != cpu.branchMap.end()) {
+            cpu.pc = it->second;
+        } else {
+            return false;
+        }
+    } else {
+        return false;
     }
+    
+
+    return true;
 };
+
+bool executeInstruction(CPU& cpu, const Instruction& inst) {
+    bool ok = false;
+    bool incrementPC = true;
+
+    switch (inst.op) {
+        case LDR:
+            break;
+        case STR:
+            break;
+        case MOV:
+            break;
+        case ADD:
+            break;
+        case SUB:
+            break;
+        case LSL:
+            break;
+        case LSR:
+            break;
+        case B:
+            ok = branch(cpu, inst.args[0]);
+            if (ok) {
+                incrementPC = false;
+            } else {
+                cout << "Branch failed" << "\n";
+            }
+
+            break;
+        case BEQ:
+            break;
+        case BGT:
+            break;
+        case BLT:
+            break;
+        case HALT:
+            cpu.pc = -1;
+            break;
+    }
+
+    if (incrementPC) {
+        cpu.pc++;
+    }
+
+    return ok;
+};
+
+const string directory = "programs";
 
 int main() {
     string fileName;
@@ -195,10 +274,14 @@ int main() {
     cout << "Enter file name: ";
     cin >> fileName;
 
-    vector<Instruction> instructions;
-    unordered_map<string, int> branchMap;
+    CPU cpu;
+    cpu.memory = vector<int>(256),
+    cpu.registers = vector<int>(10),
+    cpu.pc = 0;
 
-    ifstream programFile(fileName);
+    vector<Instruction> instructions;
+
+    ifstream programFile(directory + "/" + fileName);
 
     string programLine;
     int lineNumber = 0;
@@ -217,22 +300,20 @@ int main() {
             };
             
         } else if (isBranch(programLine)) {
-            if (!parseBranch(branchMap, programLine, instructionNumber)) {
+            if (!parseBranch(cpu.branchMap, programLine, instructionNumber)) {
                 cout << "Branch on line " << lineNumber << " is invalid: " << programLine << "\n";
             }
         } else {
-            cout << "Line" << lineNumber << "not recognised as instruction or branch: " << programLine << "\n";
+            cout << "Line " << lineNumber << " not recognised as instruction or branch: " << programLine << "\n";
         }
 
         lineNumber++;
     }
 
-    int pc = 0;
-    vector<int> memory(256);
-    vector<int> registers(10);
-
-    while (pc != -1 && pc != instructions.size()) {
-        executeInstruction(instructions[pc], pc);
+    while (cpu.pc != -1 && cpu.pc != instructions.size()) {
+        if (!executeInstruction(cpu, instructions[cpu.pc])) {
+            cout << "Instruction number " << to_string(cpu.pc) << " failed to execute" << "\n";
+        }
     }
 
     return 0;
