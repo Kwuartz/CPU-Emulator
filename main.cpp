@@ -39,6 +39,7 @@ enum Opcode {
     MOV,
     ADD,
     SUB,
+    MUL,
     LSL,
     LSR,
     CMP,
@@ -68,6 +69,7 @@ unordered_map<string, Opcode> opcodeMap = {
     {"MOV", MOV},
     {"ADD", ADD},
     {"SUB", SUB},
+    {"MUL", MUL},
     {"LSL", LSL},
     {"LSR", LSR},
     {"CMP", CMP},
@@ -257,7 +259,11 @@ bool store(CPU& cpu, const Argument& target, const Argument& source) {
     }
 
     if (target.type == REGISTER) {
-        cpu.registers[target.value] = value;
+        if (target.value <= 10) {
+            cpu.registers[target.value] = value;
+        } else {
+            return false;
+        }
     } else if (target.type == ADDRESS) {
         if (target.value <= 256) {
             cpu.memory[target.value] = value;
@@ -287,6 +293,23 @@ bool add(CPU& cpu, const Argument& target, const Argument& operand1, const Argum
     
     result.type = IMMEDIATE;
     result.value = sum;
+
+    return store(cpu, target, result);
+}
+
+bool multiply(CPU& cpu, const Argument& target, const Argument& operand1, const Argument& operand2) {
+    int num1;
+    int num2;
+
+    if (!getValue(cpu, operand1, num1) || !getValue(cpu, operand2, num2)) {
+        return false;
+    }
+
+    Argument result;
+    int product = num1 * num2;
+    
+    result.type = IMMEDIATE;
+    result.value = product;
 
     return store(cpu, target, result);
 }
@@ -332,7 +355,6 @@ bool compare(CPU& cpu, const Argument& operand1, const Argument& operand2) {
 bool flushFrame(const CPU& cpu) {
     string frame;
 
-    int i = 0;
     for (int i = 0; i < cpu.framebuffer.size(); i++) {
         int code = cpu.framebuffer[i];
 
@@ -412,7 +434,7 @@ bool executeInstruction(CPU& cpu, const Instruction& inst) {
                 break;
             }
 
-            if (inst.args[2].type == ADDRESS) {
+            if (inst.args[1].type == ADDRESS) {
                 ok = false;
                 cout << "Memory addresses can not be provided to a move operation" << "\n";
                 break;
@@ -479,6 +501,34 @@ bool executeInstruction(CPU& cpu, const Instruction& inst) {
             }
 
             break;
+
+        case MUL:
+            if (inst.args.size() < 3) {
+                ok = false;
+                cout << "Not enough arguments for multiply operation" << "\n";
+                break;
+            }
+
+            if (inst.args[0].type != REGISTER || inst.args[1].type != REGISTER) {
+                ok = false;
+                cout << "Only register addresses can be provided to the first 2 arguments of a multiply operation" << "\n";
+                break;
+            }
+
+            if (inst.args[2].type == ADDRESS) {
+                ok = false;
+                cout << "Memory addresses can not be provided as an operand to a multiply operation" << "\n";
+                break;
+            }
+
+            ok = add(cpu, inst.args[0], inst.args[1], inst.args[2], 1);
+
+            if (!ok)  {
+                cout << "Multiply operation failed" << "\n";
+            }
+            
+            break;
+
         case LSL:
             if (inst.args.size() < 3) {
                 ok = false;
@@ -663,7 +713,7 @@ bool executeInstruction(CPU& cpu, const Instruction& inst) {
 
             int delay;
 
-            if (getValue(cpu, inst.args[0], delay)) {
+            if (!getValue(cpu, inst.args[0], delay)) {
                 ok = false;
                 cout << "Wait delay argument parsing failed" << "\n";
                 break;
@@ -678,6 +728,7 @@ bool executeInstruction(CPU& cpu, const Instruction& inst) {
             break;
 
         case HALT:
+            ok = true;
             cpu.pc = -1;
             break;
     }
