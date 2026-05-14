@@ -1,6 +1,17 @@
-LOAD R1 0 bob
-BGT
-ADDds
-das
-dasdas
-B # R Ri
+; Left paddle
+MOV R0, #1
+STR R0, 276
+STR R0, 296
+STR R0, 316
+
+; Right paddle
+STR R0, 293
+STR R0, 313
+STR R0, 333
+
+; Ball
+MOV R1, #2
+STR R1, 305
+
+FLUSH
+HALT

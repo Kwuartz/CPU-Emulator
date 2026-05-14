@@ -1,6 +1,8 @@
 #include <iostream>
 
 #include <stdexcept>
+#include <thread>
+#include <chrono>
 
 #include <unordered_map>
 #include <sstream>
@@ -45,6 +47,7 @@ enum Opcode {
     BGT,
     BLT,
     FLUSH,
+    WAIT,
     HALT
 };
 
@@ -73,6 +76,7 @@ unordered_map<string, Opcode> opcodeMap = {
     {"BGT", BGT},
     {"BLT", BLT},
     {"FLUSH", FLUSH},
+    {"WAIT", WAIT},
     {"HALT", HALT}
 };
 
@@ -175,6 +179,7 @@ bool parseArgument(Argument& arg, const string& token) {
     }
 
     int value;
+
     try {
         value = stoi(cleanToken);
     } catch (...) {
@@ -295,7 +300,13 @@ bool shift(CPU& cpu, const Argument& target, const Argument& operand1, const Arg
     }
 
     Argument result;
-    int product = num1 * 2^(direction * num2);
+    int product;
+
+    if (direction == 1) {
+        product = num1 << num2;
+    } else {
+        product = num1 >> num2;
+    }
     
     result.type = IMMEDIATE;
     result.value = product;
@@ -325,7 +336,7 @@ bool flushFrame(const CPU& cpu) {
     for (int i = 0; i < cpu.framebuffer.size(); i++) {
         int code = cpu.framebuffer[i];
 
-        if (i % FRAME_WIDTH) {
+        if (i % FRAME_WIDTH == 0) {
             frame += "\n";
         }
 
@@ -639,6 +650,29 @@ bool executeInstruction(CPU& cpu, const Instruction& inst) {
 
             if (!ok) {
                 cout << "Flush frame failed" << "\n";
+            }
+
+            break;
+
+        case WAIT:
+            if (inst.args.size() < 1) {
+                ok = false;
+                cout << "Not enough arguments for wait operation" << "\n";
+                break;
+            }
+
+            int delay;
+
+            if (getValue(cpu, inst.args[0], delay)) {
+                ok = false;
+                cout << "Wait delay argument parsing failed" << "\n";
+                break;
+            }
+
+            this_thread::sleep_for(chrono::milliseconds(delay));
+
+            if (!ok) {
+                cout << "Wait failed" << "\n";
             }
 
             break;
