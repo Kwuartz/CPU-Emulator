@@ -9,6 +9,9 @@
 
 using namespace std;
 
+const int FRAME_WIDTH = 20;
+const int FRAME_HEIGHT = 10;
+
 enum ArgumentType {
     ADDRESS,
     REGISTER,
@@ -41,6 +44,7 @@ enum Opcode {
     BEQ,
     BGT,
     BLT,
+    FLUSH,
     HALT
 };
 
@@ -68,11 +72,13 @@ unordered_map<string, Opcode> opcodeMap = {
     {"BEQ", BEQ},
     {"BGT", BGT},
     {"BLT", BLT},
+    {"FLUSH", FLUSH},
     {"HALT", HALT}
 };
 
 struct CPU {
     vector<int> memory;
+    vector<int> framebuffer;
     vector<int> registers;
     Flags flags;
     int pc;
@@ -80,14 +86,16 @@ struct CPU {
     unordered_map<string, int> branchMap;
 };
 
-char mapSymbol(int code) {
+bool mapSymbol(int code, char& symbol) {
     auto it = symbolMap.find(code);
 
     if (it != symbolMap.end()) {
-        return it->second;
+        symbol = it->second;
     } else {
-        throw runtime_error("Invalid symbol code: " + to_string(code));
+        return false;
     }
+
+    return true;
 }
 
 Opcode mapOpcode(const string& token) {
@@ -246,7 +254,14 @@ bool store(CPU& cpu, const Argument& target, const Argument& source) {
     if (target.type == REGISTER) {
         cpu.registers[target.value] = value;
     } else if (target.type == ADDRESS) {
-        cpu.memory[target.value] = value;
+        if (target.value <= 256) {
+            cpu.memory[target.value] = value;
+        } else if (target.value <= 456) {
+            cpu.framebuffer[target.value - 256] = value;
+        } else {
+            return false;
+        }
+        
     } else {
         return false;
     }
@@ -300,6 +315,29 @@ bool compare(CPU& cpu, const Argument& operand1, const Argument& operand2) {
     cpu.flags.greater = num1 > num2;
     cpu.flags.less = num1 < num2;
     
+    return true;
+}
+
+bool flushFrame(const CPU& cpu) {
+    string frame;
+
+    int i = 0;
+    for (int i = 0; i < cpu.framebuffer.size(); i++) {
+        int code = cpu.framebuffer[i];
+
+        if (i % FRAME_WIDTH) {
+            frame += "\n";
+        }
+
+        char symbol;
+
+        if (mapSymbol(code, symbol)) {
+            frame += symbol;
+        } else {
+            return false;
+        }
+    }
+
     return true;
 }
 
@@ -595,6 +633,15 @@ bool executeInstruction(CPU& cpu, const Instruction& inst) {
             }
 
             break;
+        
+        case FLUSH:
+            ok = flushFrame(cpu);
+
+            if (!ok) {
+                cout << "Flush frame failed" << "\n";
+            }
+
+            break;
 
         case HALT:
             cpu.pc = -1;
@@ -618,6 +665,7 @@ int main() {
 
     CPU cpu;
     cpu.memory = vector<int>(256),
+    cpu.framebuffer = vector<int>(FRAME_WIDTH * FRAME_HEIGHT),
     cpu.registers = vector<int>(10),
     cpu.pc = 0;
 
