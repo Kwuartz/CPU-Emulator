@@ -36,6 +36,7 @@ enum Opcode {
     SUB,
     LSL,
     LSR,
+    CMP,
     B,
     BEQ,
     BGT,
@@ -62,6 +63,7 @@ unordered_map<string, Opcode> opcodeMap = {
     {"SUB", SUB},
     {"LSL", LSL},
     {"LSR", LSR},
+    {"CMP", CMP},
     {"B", B},
     {"BEQ", BEQ},
     {"BGT", BGT},
@@ -86,7 +88,7 @@ char mapSymbol(int code) {
     } else {
         throw runtime_error("Invalid symbol code: " + to_string(code));
     }
-};
+}
 
 Opcode mapOpcode(const string& token) {
     auto it = opcodeMap.find(token);
@@ -96,7 +98,7 @@ Opcode mapOpcode(const string& token) {
     } else {
         throw runtime_error("Invalid opcode: " + token);
     }
-};
+}
 
 bool isInstruction(const string& line) {
     istringstream iss(line);
@@ -107,7 +109,7 @@ bool isInstruction(const string& line) {
     } else {
         return false;
     }  
-};
+}
 
 bool isBranch(const string& line) {
     istringstream iss(line);
@@ -118,7 +120,7 @@ bool isBranch(const string& line) {
     } else {
         return false;
     } 
-};
+}
 
 bool parseBranch(unordered_map<string, int>& branchMap, const string& token, int instructionNumber) {
     string branchName = token.substr(0, token.size() - 1);
@@ -176,7 +178,7 @@ bool parseArgument(Argument& arg, const string& token) {
     arg.value = value;
 
     return true;
-};
+}
 
 bool parseInstruction(Instruction& inst, const string& line) {
     istringstream iss(line);
@@ -201,7 +203,7 @@ bool parseInstruction(Instruction& inst, const string& line) {
     };
 
     return true;
-};
+}
 
 bool branch(CPU& cpu, const Argument& arg) {
     if (!arg.label.empty()) {
@@ -218,7 +220,88 @@ bool branch(CPU& cpu, const Argument& arg) {
     
 
     return true;
-};
+}
+
+bool getValue(CPU& cpu, const Argument& arg, int& result) {
+    if (arg.type == IMMEDIATE) {
+        result = arg.value;
+    } else if (arg.type == REGISTER) {
+        result = cpu.registers[arg.value];
+    } else if (arg.type == ADDRESS) {
+        result = cpu.memory[arg.value];
+    } else {
+        return false;
+    }
+
+    return true;
+}
+
+bool store(CPU& cpu, const Argument& target, const Argument& source) {
+    int value;
+
+    if (!getValue(cpu, source, value)) {
+        return false;
+    }
+
+    if (target.type == REGISTER) {
+        cpu.registers[target.value] = value;
+    } else if (target.type == ADDRESS) {
+        cpu.memory[target.value] = value;
+    } else {
+        return false;
+    }
+
+    return true;
+}
+
+bool add(CPU& cpu, const Argument& target, const Argument& operand1, const Argument& operand2, int sign) {
+    int num1;
+    int num2;
+
+    if (!getValue(cpu, operand1, num1) || !getValue(cpu, operand2, num2)) {
+        return false;
+    }
+
+    Argument result;
+    int sum = num1 + (num2 * sign);
+    
+    result.type = IMMEDIATE;
+    result.value = sum;
+
+    return store(cpu, target, result);
+}
+
+bool shift(CPU& cpu, const Argument& target, const Argument& operand1, const Argument& operand2, int direction) {
+    int num1;
+    int num2;
+
+    if (!getValue(cpu, operand1, num1) || !getValue(cpu, operand2, num2)) {
+        return false;
+    }
+
+    Argument result;
+    int product = num1 * 2^(direction * num2);
+    
+    result.type = IMMEDIATE;
+    result.value = product;
+
+    return store(cpu, target, result);
+}
+
+bool compare(CPU& cpu, const Argument& operand1, const Argument& operand2) {
+    int num1;
+    int num2;
+
+    if (!getValue(cpu, operand1, num1) || !getValue(cpu, operand2, num2)) {
+        return false;
+    }
+
+    cpu.flags.equal = num1 == num2;
+    cpu.flags.greater = num1 > num2;
+    cpu.flags.less = num1 < num2;
+    
+    return true;
+}
 
 bool executeInstruction(CPU& cpu, const Instruction& inst) {
     bool ok = false;
@@ -226,21 +309,241 @@ bool executeInstruction(CPU& cpu, const Instruction& inst) {
 
     switch (inst.op) {
         case LDR:
+            if (inst.args.size() < 2) {
+                ok = false;
+                cout << "Not enough arguments for load register operation" << "\n";
+                break;
+            }
+
+            if (inst.args[1].type != ADDRESS) {
+                ok = false;
+                cout << "Memory address not provided to load register operation" << "\n";
+                break;
+            }
+
+            ok = store(cpu, inst.args[0], inst.args[1]);
+
+            if (!ok) {
+                cout << "Load register operation failed" << "\n";
+            }
+
             break;
+
         case STR:
+            if (inst.args.size() < 2) {
+                ok = false;
+                cout << "Not enough arguments for store register operation" << "\n";
+                break;
+            }
+
+            if (inst.args[1].type != ADDRESS) {
+                ok = false;
+                cout << "Memory address not provided to store register operation" << "\n";
+                break;
+            }
+
+            ok = store(cpu, inst.args[1], inst.args[0]);
+
+            if (!ok)  {
+                cout << "Store register operation failed" << "\n";
+            }
+
             break;
+
         case MOV:
+            if (inst.args.size() < 2) {
+                cout << "Not enough arguments for move operation" << "\n";
+                ok = false;
+                break;
+            }
+
+            if (inst.args[0].type != REGISTER) {
+                ok = false;
+                cout << "Only a register address can be provided as the first argument of a move operation" << "\n";
+                break;
+            }
+
+            if (inst.args[2].type == ADDRESS) {
+                ok = false;
+                cout << "Memory addresses can not be provided to a move operation" << "\n";
+                break;
+            }
+
+            ok = store(cpu, inst.args[0], inst.args[1]);
+
+            if (!ok)  {
+                cout << "Move operation failed" << "\n";
+            }
+
             break;
+
         case ADD:
+            if (inst.args.size() < 3) {
+                ok = false;
+                cout << "Not enough arguments for add operation" << "\n";
+                break;
+            }
+
+            if (inst.args[0].type != REGISTER || inst.args[1].type != REGISTER) {
+                ok = false;
+                cout << "Only register addresses can be provided to the first 2 arguments of an add operation" << "\n";
+                break;
+            }
+
+            if (inst.args[2].type == ADDRESS) {
+                ok = false;
+                cout << "Memory addresses can not be provided as an operand to an add operation" << "\n";
+                break;
+            }
+
+            ok = add(cpu, inst.args[0], inst.args[1], inst.args[2], 1);
+
+            if (!ok)  {
+                cout << "Add operation failed" << "\n";
+            }
+
             break;
+
         case SUB:
+            if (inst.args.size() < 3) {
+                ok = false;
+                cout << "Not enough arguments for subtract operation" << "\n";
+                break;
+            }
+
+            if (inst.args[0].type != REGISTER || inst.args[1].type != REGISTER) {
+                ok = false;
+                cout << "Only register addresses can be provided to the first 2 arguments of a subtract operation" << "\n";
+                break;
+            }
+
+            if (inst.args[2].type == ADDRESS) {
+                ok = false;
+                cout << "Memory addresses can not be provided as an operand to a subtract operation" << "\n";
+                break;
+            }
+
+            ok = add(cpu, inst.args[0], inst.args[1], inst.args[2], -1);
+
+            if (!ok)  {
+                cout << "Add operation failed" << "\n";
+            }
+
             break;
         case LSL:
+            if (inst.args.size() < 3) {
+                ok = false;
+                cout << "Not enough arguments for logical shift left operation" << "\n";
+                break;
+            }
+
+            if (inst.args[0].type != REGISTER || inst.args[1].type != REGISTER) {
+                ok = false;
+                cout << "Only register addresses can be provided to the first 2 arguments of a logical shift left operation" << "\n";
+                break;
+            }
+
+            if (inst.args[2].type == ADDRESS) {
+                ok = false;
+                cout << "Memory addresses can not be provided as an operand to a logical shift left operation" << "\n";
+                break;
+            }
+
+            ok = shift(cpu, inst.args[0], inst.args[1], inst.args[2], 1);
+
+            if (!ok)  {
+                cout << "Logical shift left operation failed" << "\n";
+            }
+
             break;
+
         case LSR:
+            if (inst.args.size() < 3) {
+                ok = false;
+                cout << "Not enough arguments for logical shift right operation" << "\n";
+                break;
+            }
+
+            if (inst.args[0].type != REGISTER || inst.args[1].type != REGISTER) {
+                ok = false;
+                cout << "Only register addresses can be provided to the first 2 arguments of a logical shift right operation" << "\n";
+                break;
+            }
+
+            if (inst.args[2].type == ADDRESS) {
+                ok = false;
+                cout << "Memory addresses can not be provided as an operand to a logical shift right operation" << "\n";
+                break;
+            }
+
+            ok = shift(cpu, inst.args[0], inst.args[1], inst.args[2], -1);
+
+            if (!ok)  {
+                cout << "Logical shift right operation failed" << "\n";
+            }
+
             break;
+
+        case CMP:
+            if (inst.args.size() < 2) {
+                ok = false;
+                cout << "Not enough arguments for compare operation" << "\n";
+                break;
+            }
+
+            if (inst.args[0].type != REGISTER) {
+                ok = false;
+                cout << "Only a register address can be provided as the first argument of a compare operation" << "\n";
+                break;
+            }
+
+            if (inst.args[1].type == ADDRESS) {
+                ok = false;
+                cout << "A memory address can not be provided as the operarond of a compare operation" << "\n";
+                break;
+            }
+
+            ok = compare(cpu, inst.args[0], inst.args[1]);
+
+            if (!ok) {
+                cout << "Compare failed" << "\n";
+            }
+            
+            break;
+
+            break;
+
         case B:
+            if (inst.args.size() < 1) {
+                ok = false;
+                cout << "Not enough arguments for branch operation" << "\n";
+                break;
+            }
+
             ok = branch(cpu, inst.args[0]);
+
+            if (ok) {
+                incrementPC = false;
+            } else {
+                cout << "Branch failed" << "\n";
+            }
+            
+            break;
+
+        case BEQ:
+            if (inst.args.size() < 1) {
+                ok = false;
+                cout << "Not enough arguments for branch operation" << "\n";
+                break;
+            }
+
+            if (!cpu.flags.equal) {
+                ok = true;
+                break;
+            }
+
+            ok = branch(cpu, inst.args[0]);
+
             if (ok) {
                 incrementPC = false;
             } else {
@@ -248,12 +551,51 @@ bool executeInstruction(CPU& cpu, const Instruction& inst) {
             }
 
             break;
-        case BEQ:
-            break;
+
         case BGT:
+            if (inst.args.size() < 1) {
+                ok = false;
+                cout << "Not enough arguments for branch operation" << "\n";
+                break;
+            }
+
+            if (!cpu.flags.greater) {
+                ok = true;
+                break;
+            }
+
+            ok = branch(cpu, inst.args[0]);
+
+            if (ok) {
+                incrementPC = false;
+            } else {
+                cout << "Branch failed" << "\n";
+            }
+
             break;
+
         case BLT:
+            if (inst.args.size() < 1) {
+                ok = false;
+                cout << "Not enough arguments for branch operation" << "\n";
+                break;
+            }
+
+            if (!cpu.flags.less) {
+                ok = true;
+                break;
+            }
+
+            ok = branch(cpu, inst.args[0]);
+
+            if (ok) {
+                incrementPC = false;
+            } else {
+                cout << "Branch failed" << "\n";
+            }
+
             break;
+
         case HALT:
             cpu.pc = -1;
             break;
