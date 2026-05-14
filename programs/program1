@@ -1,17 +1,136 @@
-; Left paddle
-MOV R0, #1
-STR R0, 276
-STR R0, 296
-STR R0, 316
+; =========================
+; CONSTANTS
+; =========================
+MOV R8, #20
+MOV R9, #10
 
-; Right paddle
-STR R0, 293
-STR R0, 313
-STR R0, 333
+START:
 
-; Ball
-MOV R1, #2
-STR R1, 305
+; =========================================================
+; LEFT AI (only moves if ball moving LEFT)
+; =========================================================
+CMP R2, #-1
+BNE RIGHT_AI
 
+CMP R1, R4
+BEQ RIGHT_AI
+
+BLT LEFT_UP
+BGT LEFT_DOWN
+B RIGHT_AI
+
+LEFT_UP:
+SUB R4, R4, #1
+B RIGHT_AI
+
+LEFT_DOWN:
+ADD R4, R4, #1
+
+; =========================================================
+; RIGHT AI (only moves if ball moving RIGHT)
+; =========================================================
+RIGHT_AI:
+
+CMP R2, #1
+BNE MOVE_BALL
+
+CMP R1, R5
+BEQ MOVE_BALL
+
+BLT RIGHT_UP
+BGT RIGHT_DOWN
+B MOVE_BALL
+
+RIGHT_UP:
+SUB R5, R5, #1
+B MOVE_BALL
+
+RIGHT_DOWN:
+ADD R5, R5, #1
+
+; =========================================================
+; MOVE BALL
+; =========================================================
+MOVE_BALL:
+
+ADD R0, R0, R2
+ADD R1, R1, R3
+
+; =========================================================
+; BOUNDARY COLLISION (TOP/BOTTOM)
+; =========================================================
+CMP R1, #0
+BEQ BOUNCE_Y
+
+CMP R1, #9
+BEQ BOUNCE_Y
+
+B DRAW
+
+BOUNCE_Y:
+MUL R3, R3, #-1     ; reverse dy using MUL (your request)
+
+; =========================================================
+; DRAW FRAMEBUFFER (CLEAR + DRAW OBJECTS)
+; =========================================================
+DRAW:
+
+; ---- clear loop ----
+MOV R6, #0
+
+CLEAR_LOOP:
+CMP R6, #200
+BEQ DRAW_OBJECTS
+
+STR #0, R6
+ADD R6, R6, #1
+B CLEAR_LOOP
+
+
+; =========================================================
+; DRAW BALL
+; index = y * 20 + x
+; =========================================================
+DRAW_OBJECTS:
+
+MUL R7, R1, R8
+ADD R7, R7, R0
+STR #2, R7
+
+
+; =========================================================
+; DRAW LEFT PADDLE
+; =========================================================
+MUL R7, R4, R8
+STR #1, R7
+
+ADD R7, R7, #20
+STR #1, R7
+
+ADD R7, R7, #20
+STR #1, R7
+
+
+; =========================================================
+; DRAW RIGHT PADDLE
+; =========================================================
+MUL R7, R5, R8
+ADD R7, R7, #19
+STR #1, R7
+
+SUB R7, R7, #20
+STR #1, R7
+
+SUB R7, R7, #20
+STR #1, R7
+
+
+; =========================================================
+; FLUSH + TIMING
+; =========================================================
 FLUSH
+WAIT #80
+
+B START
+
 HALT

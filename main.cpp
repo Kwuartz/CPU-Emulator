@@ -526,7 +526,7 @@ bool executeInstruction(CPU& cpu, const Instruction& inst) {
             if (!ok)  {
                 cout << "Multiply operation failed" << "\n";
             }
-            
+
             break;
 
         case LSL:
@@ -607,8 +607,6 @@ bool executeInstruction(CPU& cpu, const Instruction& inst) {
             if (!ok) {
                 cout << "Compare failed" << "\n";
             }
-            
-            break;
 
             break;
 
@@ -764,6 +762,8 @@ int main() {
     while (getline(programFile, programLine)) {
         if (programLine.size() == 0) {
             cout << "Line" << lineNumber << " is empty" << "\n";
+        } else if (programLine.front() == ';') {
+            // Comment
         } else if (isInstruction(programLine)) {
             Instruction inst;
 
