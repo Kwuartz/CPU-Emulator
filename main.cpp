@@ -834,6 +834,7 @@ int main() {
     while (cpu.pc != -1 && cpu.pc != instructions.size()) {
         if (!executeInstruction(cpu, instructions[cpu.pc])) {
             cout << "Instruction number " << to_string(cpu.pc) << " failed to execute" << "\n";
+            break;
         }
     }
 
