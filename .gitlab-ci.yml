@@ -6,7 +6,7 @@ build:
     - g++ -std=c++17 -Wall -Wextra -Werror -O2 -g main.cpp -o app
   artifacts:
     paths:
-      - mybinary
+      - app
 
 test:
   stage: test
