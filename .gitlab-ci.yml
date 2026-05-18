@@ -1,0 +1,15 @@
+image: gcc
+
+build:
+  stage: build
+  script:
+    - g++ -std=c++17 -Wall -Wextra -Werror -O2 -g main.cpp -o app
+  artifacts:
+    paths:
+      - mybinary
+
+test:
+  stage: test
+  script:
+    - ./app
+
