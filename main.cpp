@@ -353,7 +353,17 @@ class Kernel {
         bool startExecution() {
             while (processes.size() > 0) {
                 for (auto it = processes.begin(); it != processes.end();) {
-                    if (!executeInstruction(*it, it->instructions[it->pc])) {
+                    if (it->pc <= -1 || it->pc >= static_cast<int>(it->instructions.size())) {
+                        bool ok = cleanupProcess(*it);
+                        
+                        if (ok) {
+                            cout << it->getDescriptor() << "succesfully cleaned up" << "\n";
+                        } else {
+                            cout << it->getDescriptor() << " cleanup failed" << "\n";
+                        }
+
+                        it = processes.erase(it);
+                    } else if (!executeInstruction(*it, it->instructions[it->pc])) {
                         cout << "Instruction number " << to_string(it->pc) << " failed to execute" << "\n";
                         cout << it->getDescriptor() << " exited with an error" << "\n";
 
@@ -366,23 +376,6 @@ class Kernel {
                         }
 
                         it = processes.erase(it);
-
-                        return false;
-                    }
-
-                    if (it->pc == -1 || it->pc == it->instructions.size()) {
-                        bool ok = cleanupProcess(*it);
-                        
-                        if (ok) {
-                            cout << it->getDescriptor() << "succesfully cleaned up" << "\n";
-                            it = processes.erase(it);
-                        } else {
-                            cout << it->getDescriptor() << " cleanup failed" << "\n";
-                            it = processes.erase(it);
-                            return false;
-                        }
-
-                        
                     } else {
                         it++;
                     }
