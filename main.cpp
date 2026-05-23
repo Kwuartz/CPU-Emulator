@@ -12,7 +12,9 @@
 using namespace std;
 
 const int MEMORY_SIZE = 1024;
+const int PAGE_SIZE = 128;
 const int REGISTER_COUNT = 20;
+
 
 const int FRAME_WIDTH = 100;
 const int FRAME_HEIGHT = 30;
@@ -226,7 +228,7 @@ bool parseInstruction(Instruction& inst, const string& line) {
     return true;
 }
 
-struct CPU {
+struct Process {
     vector<int> memory;
     vector<int> framebuffer;
 };
@@ -238,6 +240,8 @@ class Process {
 
         vector<int> registers;
         Flags flags;
+        string name;
+        int id;
         int pc;
 
         bool addPage(int pageNumber, int frameNumber) {
@@ -268,12 +272,18 @@ class Process {
 
 class Kernel {
     public:
-        Kernel(int memorySize, int registerCount) {
+        Kernel(int memorySize, int pageSize) {
             memory = vector<int>(memorySize);
+            frameSize = pageSize;
+            
+            int frameCount = memorySize / pageSize;
+            for (int i = 0; i < frameCount; i++) {
+                frameHeap.push_back(i);
+            }
         }
 
-        bool loadProgram(string path, int registerCount) {
-            ifstream programFile(path);
+        bool loadProgram(string directory, string name, int registerCount) {
+            ifstream programFile(directory + name);
             string programLine;
             
             int instructionNumber = 0;
@@ -281,6 +291,8 @@ class Kernel {
 
             Process process;
             process.registers = vector<int>(registerCount);
+            process.name = name;
+            process.id = processes.size() - 1;
             process.pc = 0;
 
             while (getline(programFile, programLine)) {
@@ -314,26 +326,79 @@ class Kernel {
         }
 
         bool startExecution() {
-            while (cpu.pc != -1 && cpu.pc != instructions.size()) {
-                if (!executeInstruction(cpu, instructions[cpu.pc])) {
-                    cout << "Instruction number " << to_string(cpu.pc) << " failed to execute" << "\n";
-                    return false;
+            while (processes.size() > 0) {
+                for (auto it = processes.begin(); it != processes.end()) {
+                    if (!executeInstruction(*it, it->instructions[it->pc])) {
+                        cout << "Instruction number " << to_string(it->pc) << " failed to execute" << "\n";
+                        cout << "Process ID " << to_string(it->id) << " (" << it->name << ") exited with an error" << "\n";
+
+                        it = processes.erase(it);
+                        continue;
+                    }
+
+                    if (it->pc == -1 || it->pc == it->instructions.size()) {
+                        it = processes.erase(it);
+                    } else {
+                        it++;
+                    }
                 }
+                
             }
             
             return true;
         }
     
     private:
-    vector<Process> processes;
+        vector<Process> processes;
+        vector<int> frameHeap;
         vector<int> memory;
 
-        bool branch(CPU& cpu, const Argument& arg) {
-            if (!arg.label.empty()) {
-                auto it = cpu.branchMap.find(arg.label);
+        int frameSize;
 
-                if (it != cpu.branchMap.end()) {
-                    cpu.pc = it->second;
+        int translateFrame() {
+            
+        }
+
+        int getFreeFrame() {
+            if (frameHeap.size() > 0) {
+                int frame = frameHeap.back();
+                frameHeap.pop_back();
+
+                return frame;
+            } else {
+                return -1;
+            }
+        }
+
+        bool returnFrame(int frameNumber) {
+            if (std::find(frameHeap.begin(), frameHeap.end(), frameNumber) == frameHeap.end()) {
+                frameHeap.push_back(frameNumber);
+                return true;
+            } else {
+                return false;
+            }
+        }
+
+        bool getValue(Process& process, const Argument& arg, int& result) {
+            if (arg.type == IMMEDIATE) {
+                result = arg.value;
+            } else if (arg.type == REGISTER) {
+                result = process.registers[arg.value];
+            } else if (arg.type == ADDRESS) {
+                result = process.memory[arg.value];
+            } else {
+                return false;
+            }
+
+            return true;
+        }
+
+        bool branch(Process& process, const Argument& arg) {
+            if (!arg.label.empty()) {
+                auto it = process.branchMap.find(arg.label);
+
+                if (it != process.branchMap.end()) {
+                    process.pc = it->second;
                 } else {
                     return false;
                 }
@@ -345,38 +410,24 @@ class Kernel {
             return true;
         }
 
-        bool getValue(CPU& cpu, const Argument& arg, int& result) {
-            if (arg.type == IMMEDIATE) {
-                result = arg.value;
-            } else if (arg.type == REGISTER) {
-                result = cpu.registers[arg.value];
-            } else if (arg.type == ADDRESS) {
-                result = cpu.memory[arg.value];
-            } else {
-                return false;
-            }
-
-            return true;
-        }
-
-        bool store(CPU& cpu, const Argument& target, const Argument& source) {
+        bool store(Process& process, const Argument& target, const Argument& source) {
             int value;
 
-            if (!getValue(cpu, source, value)) {
+            if (!getValue(process, source, value)) {
                 return false;
             }
 
             if (target.type == REGISTER) {
                 if (target.value < REGISTER_COUNT) {
-                    cpu.registers[target.value] = value;
+                    process.registers[target.value] = value;
                 } else {
                     return false;
                 }
             } else if (target.type == ADDRESS) {
                 if (target.value < MEMORY_SIZE) {
-                    cpu.memory[target.value] = value;
+                    process.memory[target.value] = value;
                 } else if (target.value < MEMORY_SIZE + FRAME_BUFFER_SIZE) {
-                    cpu.framebuffer[target.value - MEMORY_SIZE] = value;
+                    process.framebuffer[target.value - MEMORY_SIZE] = value;
                 } else {
                     return false;
                 }
@@ -388,11 +439,11 @@ class Kernel {
             return true;
         }
 
-        bool add(CPU& cpu, const Argument& target, const Argument& operand1, const Argument& operand2, int sign) {
+        bool add(Process& process, const Argument& target, const Argument& operand1, const Argument& operand2, int sign) {
             int num1;
             int num2;
 
-            if (!getValue(cpu, operand1, num1) || !getValue(cpu, operand2, num2)) {
+            if (!getValue(process, operand1, num1) || !getValue(process, operand2, num2)) {
                 return false;
             }
 
@@ -402,14 +453,14 @@ class Kernel {
             result.type = IMMEDIATE;
             result.value = sum;
 
-            return store(cpu, target, result);
+            return store(process, target, result);
         }
 
-        bool multiply(CPU& cpu, const Argument& target, const Argument& operand1, const Argument& operand2) {
+        bool multiply(Process& process, const Argument& target, const Argument& operand1, const Argument& operand2) {
             int num1;
             int num2;
 
-            if (!getValue(cpu, operand1, num1) || !getValue(cpu, operand2, num2)) {
+            if (!getValue(process, operand1, num1) || !getValue(process, operand2, num2)) {
                 return false;
             }
 
@@ -419,14 +470,14 @@ class Kernel {
             result.type = IMMEDIATE;
             result.value = product;
 
-            return store(cpu, target, result);
+            return store(process, target, result);
         }
 
-        bool shift(CPU& cpu, const Argument& target, const Argument& operand1, const Argument& operand2, int direction) {
+        bool shift(Process& process, const Argument& target, const Argument& operand1, const Argument& operand2, int direction) {
             int num1;
             int num2;
 
-            if (!getValue(cpu, operand1, num1) || !getValue(cpu, operand2, num2)) {
+            if (!getValue(process, operand1, num1) || !getValue(process, operand2, num2)) {
                 return false;
             }
 
@@ -442,31 +493,31 @@ class Kernel {
             result.type = IMMEDIATE;
             result.value = product;
 
-            return store(cpu, target, result);
+            return store(process, target, result);
         }
 
-        bool compare(CPU& cpu, const Argument& operand1, const Argument& operand2) {
+        bool compare(Process& process, const Argument& operand1, const Argument& operand2) {
             int num1;
             int num2;
 
-            if (!getValue(cpu, operand1, num1) || !getValue(cpu, operand2, num2)) {
+            if (!getValue(process, operand1, num1) || !getValue(process, operand2, num2)) {
                 return false;
             }
 
-            cpu.flags.equal = num1 == num2;
-            cpu.flags.greater = num1 > num2;
-            cpu.flags.less = num1 < num2;
+            process.flags.equal = num1 == num2;
+            process.flags.greater = num1 > num2;
+            process.flags.less = num1 < num2;
             
             return true;
         }
 
-        bool flushFrame(const CPU& cpu) {
+        bool flushFrame(const Process& process) {
             string frame;
             
             cout << "\033[H\033[2J";
 
-            for (int i = 0; i < cpu.framebuffer.size(); i++) {
-                int code = cpu.framebuffer[i];
+            for (int i = 0; i < process.framebuffer.size(); i++) {
+                int code = process.framebuffer[i];
 
                 if (i % FRAME_WIDTH == 0) {
                     frame += "\n";
@@ -486,7 +537,7 @@ class Kernel {
             return true;
         }
 
-        bool executeInstruction(CPU& cpu, const Instruction& inst) {
+        bool executeInstruction(Process& process, const Instruction& inst) {
             bool ok = false;
             bool incrementPC = true;
 
@@ -501,10 +552,10 @@ class Kernel {
                     Argument sourceAddress = inst.args[1];
                     if (inst.args[1].type == REGISTER) {
                         sourceAddress.type = ADDRESS;
-                        getValue(cpu, inst.args[1], sourceAddress.value);
+                        getValue(process, inst.args[1], sourceAddress.value);
                     }
 
-                    ok = store(cpu, inst.args[0], sourceAddress);
+                    ok = store(process, inst.args[0], sourceAddress);
 
                     if (!ok) {
                         cout << "Load register operation failed" << "\n";
@@ -523,10 +574,10 @@ class Kernel {
                     Argument targetAddress = inst.args[1];
                     if (inst.args[1].type == REGISTER) {
                         targetAddress.type = ADDRESS;
-                        getValue(cpu, inst.args[1], targetAddress.value);
+                        getValue(process, inst.args[1], targetAddress.value);
                     }
 
-                    ok = store(cpu, targetAddress, inst.args[0]);
+                    ok = store(process, targetAddress, inst.args[0]);
 
                     if (!ok)  {
                         cout << "Store register operation failed" << "\n";
@@ -554,7 +605,7 @@ class Kernel {
                         break;
                     }
 
-                    ok = store(cpu, inst.args[0], inst.args[1]);
+                    ok = store(process, inst.args[0], inst.args[1]);
 
                     if (!ok)  {
                         cout << "Move operation failed" << "\n";
@@ -581,7 +632,7 @@ class Kernel {
                         break;
                     }
 
-                    ok = add(cpu, inst.args[0], inst.args[1], inst.args[2], 1);
+                    ok = add(process, inst.args[0], inst.args[1], inst.args[2], 1);
 
                     if (!ok)  {
                         cout << "Add operation failed" << "\n";
@@ -608,7 +659,7 @@ class Kernel {
                         break;
                     }
 
-                    ok = add(cpu, inst.args[0], inst.args[1], inst.args[2], -1);
+                    ok = add(process, inst.args[0], inst.args[1], inst.args[2], -1);
 
                     if (!ok)  {
                         cout << "Add operation failed" << "\n";
@@ -635,7 +686,7 @@ class Kernel {
                         break;
                     }
 
-                    ok = multiply(cpu, inst.args[0], inst.args[1], inst.args[2]);
+                    ok = multiply(process, inst.args[0], inst.args[1], inst.args[2]);
 
                     if (!ok)  {
                         cout << "Multiply operation failed" << "\n";
@@ -662,7 +713,7 @@ class Kernel {
                         break;
                     }
 
-                    ok = shift(cpu, inst.args[0], inst.args[1], inst.args[2], 1);
+                    ok = shift(process, inst.args[0], inst.args[1], inst.args[2], 1);
 
                     if (!ok)  {
                         cout << "Logical shift left operation failed" << "\n";
@@ -689,7 +740,7 @@ class Kernel {
                         break;
                     }
 
-                    ok = shift(cpu, inst.args[0], inst.args[1], inst.args[2], -1);
+                    ok = shift(process, inst.args[0], inst.args[1], inst.args[2], -1);
 
                     if (!ok)  {
                         cout << "Logical shift right operation failed" << "\n";
@@ -716,7 +767,7 @@ class Kernel {
                         break;
                     }
 
-                    ok = compare(cpu, inst.args[0], inst.args[1]);
+                    ok = compare(process, inst.args[0], inst.args[1]);
 
                     if (!ok) {
                         cout << "Compare failed" << "\n";
@@ -731,7 +782,7 @@ class Kernel {
                         break;
                     }
 
-                    ok = branch(cpu, inst.args[0]);
+                    ok = branch(process, inst.args[0]);
 
                     if (ok) {
                         incrementPC = false;
@@ -748,12 +799,12 @@ class Kernel {
                         break;
                     }
 
-                    if (!cpu.flags.equal) {
+                    if (!process.flags.equal) {
                         ok = true;
                         break;
                     }
 
-                    ok = branch(cpu, inst.args[0]);
+                    ok = branch(process, inst.args[0]);
 
                     if (ok) {
                         incrementPC = false;
@@ -770,12 +821,12 @@ class Kernel {
                         break;
                     }
 
-                    if (cpu.flags.equal) {
+                    if (process.flags.equal) {
                         ok = true;
                         break;
                     }
 
-                    ok = branch(cpu, inst.args[0]);
+                    ok = branch(process, inst.args[0]);
 
                     if (ok) {
                         incrementPC = false;
@@ -792,12 +843,12 @@ class Kernel {
                         break;
                     }
 
-                    if (!cpu.flags.greater) {
+                    if (!process.flags.greater) {
                         ok = true;
                         break;
                     }
 
-                    ok = branch(cpu, inst.args[0]);
+                    ok = branch(process, inst.args[0]);
 
                     if (ok) {
                         incrementPC = false;
@@ -814,12 +865,12 @@ class Kernel {
                         break;
                     }
 
-                    if (!cpu.flags.less) {
+                    if (!process.flags.less) {
                         ok = true;
                         break;
                     }
 
-                    ok = branch(cpu, inst.args[0]);
+                    ok = branch(process, inst.args[0]);
 
                     if (ok) {
                         incrementPC = false;
@@ -831,7 +882,7 @@ class Kernel {
                 
                 case FLUSH:
                     cout << "Flush" << endl;
-                    ok = flushFrame(cpu);
+                    ok = flushFrame(process);
 
                     if (!ok) {
                         cout << "Flush frame failed" << "\n";
@@ -848,7 +899,7 @@ class Kernel {
 
                     int delay;
 
-                    if (!getValue(cpu, inst.args[0], delay)) {
+                    if (!getValue(process, inst.args[0], delay)) {
                         ok = false;
                         cout << "Wait delay argument parsing failed" << "\n";
                         break;
@@ -865,12 +916,12 @@ class Kernel {
 
                 case HALT:
                     ok = true;
-                    cpu.pc = -1;
+                    process.pc = -1;
                     break;
             }
 
             if (incrementPC) {
-                cpu.pc++;
+                process.pc++;
             }
 
             return ok;
@@ -891,7 +942,7 @@ int main() {
 
     bool ok;
 
-    ok = kernel.loadProgram(directory + "/" + fileName, REGISTER_COUNT);
+    ok = kernel.loadProgram(directory + "/", fileName, REGISTER_COUNT);
     
     if (ok) {
         cout << "Program loaded succesfully" << "\n";
