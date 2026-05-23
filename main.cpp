@@ -1,7 +1,9 @@
 #include <iostream>
 
+#include <filesystem>
 #include <stdexcept>
 #include <algorithm>
+#include <cstdlib>
 #include <thread>
 #include <chrono>
 
@@ -17,10 +19,11 @@ const int PAGE_SIZE = 128;
 const int PAGE_COUNT = MEMORY_SIZE / PAGE_SIZE;
 const int REGISTER_COUNT = 20;
 
-
 const int FRAME_WIDTH = 100;
 const int FRAME_HEIGHT = 30;
 const int FRAME_BUFFER_SIZE = FRAME_HEIGHT * FRAME_WIDTH;
+
+const int MAX_TEST_INSTRUCTIONS = 1000;
 
 enum ArgumentType {
     ADDRESS,
@@ -350,7 +353,7 @@ class Kernel {
             return true;
         }
 
-        bool startExecution() {
+        bool startExecution(int maxInstructions = -1) {
             while (processes.size() > 0) {
                 for (auto it = processes.begin(); it != processes.end();) {
                     if (it->pc <= -1 || it->pc >= static_cast<int>(it->instructions.size())) {
@@ -380,8 +383,22 @@ class Kernel {
                         it++;
                     }
                 }
-                
+
+                if (maxInstructions != -1) {
+                    maxInstructions--;
+
+                    if (maxInstructions == 0) {
+                        cout << "Max instructions reached" << "\n";
+                        break;
+                    }
+                }
             }
+
+            for (auto& process : processes) {
+                cleanupProcess(process);
+            }
+
+            processes.clear();
             
             return true;
         }
@@ -1011,28 +1028,52 @@ class Kernel {
         };
 };
 
-const string directory = "programs";
+bool checkGitLabCI() {
+    const char* ci = getenv("GITLAB_CI");
+    return ci && string(ci) == "true";
+}
+
+const string programsDirectory = "programs/";
+namespace fs = filesystem;
 
 int main() {
     Kernel kernel(PAGE_COUNT, PAGE_SIZE);
 
-    string fileName;
-
-    cout << "Enter file name: ";
-    cin >> fileName;
-
     bool ok;
 
-    ok = kernel.loadProgram(directory + "/", fileName, REGISTER_COUNT);
-    
-    if (ok) {
-        cout << "Program loaded succesfully" << "\n";
-    } else {
-        cout << "Error while loading program" << "\n";
+    if (!fs::exists(programsDirectory)) {
+        cout << "Programs directory does not exist\n";
         return 0;
     }
+
+    for (const auto& entry : fs::directory_iterator(programsDirectory)) {
+        fs::path filePath = entry.path();
+        string fileName = filePath.filename().string();
+        string extension = filePath.extension().string();
+        
+        if (extension != ".asm") {
+            cout << " File not loaded as it is not an .asm file: " << fileName << "\n";
+            continue;
+        }
+
+        ok = kernel.loadProgram(programsDirectory, fileName, REGISTER_COUNT);
+        
+        if (!ok) {
+            cout << "Error while loading .asm file: " << fileName <<"\n";
+        } else {
+            cout << "Succesfully loaded .asm file: " << fileName <<"\n";
+        }
+    }
+
+    cout << "Programs loaded succesfully" << "\n";
     
-    ok = kernel.startExecution();
+    bool isGitlabCI = checkGitLabCI();
+
+    if (isGitlabCI) {
+        ok = kernel.startExecution(MAX_TEST_INSTRUCTIONS);
+    } else {
+        ok = kernel.startExecution();
+    }
 
     if (ok) {
         cout << "All programs executed succesfully" << "\n";
