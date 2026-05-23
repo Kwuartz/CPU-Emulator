@@ -358,29 +358,31 @@ class Kernel {
                         cout << it->getDescriptor() << " exited with an error" << "\n";
 
                         bool ok = cleanupProcess(*it);
-                        it = processes.erase(it);
-
+                        
                         if (ok) {
                             cout << it->getDescriptor() << " succesfully cleaned up" << "\n";
                         } else {
                             cout << it->getDescriptor() << " cleanup failed" << "\n";
                         }
 
-                        return false;
+                        it = processes.erase(it);
 
-                        continue;
+                        return false;
                     }
 
                     if (it->pc == -1 || it->pc == it->instructions.size()) {
                         bool ok = cleanupProcess(*it);
-                        it = processes.erase(it);
-
+                        
                         if (ok) {
                             cout << it->getDescriptor() << "succesfully cleaned up" << "\n";
+                            it = processes.erase(it);
                         } else {
                             cout << it->getDescriptor() << " cleanup failed" << "\n";
+                            it = processes.erase(it);
                             return false;
                         }
+
+                        
                     } else {
                         it++;
                     }
@@ -426,7 +428,7 @@ class Kernel {
             return address;
         }
 
-        bool cleanupProcess(Process process) {
+        bool cleanupProcess(const Process &process) {
             vector<int> frameNumbers = process.getAllFrameNumbers();
 
             bool ok;
