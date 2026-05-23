@@ -1012,7 +1012,7 @@ class Kernel {
         };
 };
 
-const string programsDirectory = "programs";
+const string programsDirectory = "programs/";
 namespace fs = filesystem;
 
 int main() {
