@@ -13,6 +13,7 @@ using namespace std;
 
 const int MEMORY_SIZE = 1024;
 const int PAGE_SIZE = 128;
+const int PAGE_COUNT = MEMORY_SIZE / PAGE_SIZE;
 const int REGISTER_COUNT = 20;
 
 
@@ -256,7 +257,17 @@ class Process {
             return true;
         }
 
-        int getFrameNumber(int pageNumber) {
+        vector<int> getAllFrameNumbers() const {
+            vector<int> frameNumbers;
+            
+            for (const auto& [page, frame]: pageMap) {
+                frameNumbers.push_back(frame);
+            }
+
+            return frameNumbers;
+        }
+
+        int getFrameNumber(int pageNumber) const {
             auto it = pageMap.find(pageNumber);
 
             if (it != pageMap.end()) {
@@ -272,9 +283,10 @@ class Process {
 
 class Kernel {
     public:
-        Kernel(int memorySize, int pageSize) {
-            memory = vector<int>(memorySize);
+        Kernel(int pageCount, int pageSize) {
             frameSize = pageSize;
+            memorySize = pageCount * pageSize;
+            memory = vector<int>(memorySize);
             
             int frameCount = memorySize / pageSize;
             for (int i = 0; i < frameCount; i++) {
@@ -327,17 +339,34 @@ class Kernel {
 
         bool startExecution() {
             while (processes.size() > 0) {
-                for (auto it = processes.begin(); it != processes.end()) {
+                for (auto it = processes.begin(); it != processes.end();) {
                     if (!executeInstruction(*it, it->instructions[it->pc])) {
                         cout << "Instruction number " << to_string(it->pc) << " failed to execute" << "\n";
                         cout << "Process ID " << to_string(it->id) << " (" << it->name << ") exited with an error" << "\n";
 
+                        bool ok = cleanupProcess(*it);
                         it = processes.erase(it);
+
+                        if (ok) {
+                            cout << "Process ID " << to_string(it->id) << " (" << it->name << ") succesfully cleaned up" << "\n";
+                        } else {
+                            cout << "Process ID " << to_string(it->id) << " (" << it->name << ") cleanup failed" << "\n";
+                            return false;
+                        }
+
                         continue;
                     }
 
                     if (it->pc == -1 || it->pc == it->instructions.size()) {
+                        bool ok = cleanupProcess(*it);
                         it = processes.erase(it);
+
+                        if (ok) {
+                            cout << "Process ID " << to_string(it->id) << " (" << it->name << ") succesfully cleaned up" << "\n";
+                        } else {
+                            cout << "Process ID " << to_string(it->id) << " (" << it->name << ") cleanup failed" << "\n";
+                            return false;
+                        }
                     } else {
                         it++;
                     }
@@ -353,10 +382,43 @@ class Kernel {
         vector<int> frameHeap;
         vector<int> memory;
 
+        int memorySize;
         int frameSize;
 
-        int translateFrame() {
+        int getAddress(Process& process, int virtualAddresss) {
+            int pageNumber = virtualAddresss / frameSize;
             
+            int frameNumber = process.getFrameNumber(pageNumber);
+
+            // Page fault
+            if (frameNumber == -1) { 
+                frameNumber = getFreeFrame();
+                process.addPage(pageNumber, frameNumber);   
+            }
+            
+            int offset = virtualAddresss % frameSize;
+            int address = frameNumber * frameSize + offset;
+
+            if (address < memorySize) {
+                return -1;
+            }
+
+            return address;
+        }
+
+        bool cleanupProcess(Process process) {
+            vector<int> frameNumbers = process.getAllFrameNumbers();
+
+            bool ok;
+            for (int frameNumber: frameNumbers) {
+                ok = returnPage(frameNumber);
+                
+                if (!ok) {
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         int getFreeFrame() {
@@ -370,7 +432,7 @@ class Kernel {
             }
         }
 
-        bool returnFrame(int frameNumber) {
+        bool returnPage(int frameNumber) {
             if (std::find(frameHeap.begin(), frameHeap.end(), frameNumber) == frameHeap.end()) {
                 frameHeap.push_back(frameNumber);
                 return true;
@@ -385,7 +447,13 @@ class Kernel {
             } else if (arg.type == REGISTER) {
                 result = process.registers[arg.value];
             } else if (arg.type == ADDRESS) {
-                result = process.memory[arg.value];
+                int address = getAddress(process, arg.value);
+
+                if (address == -1) {
+                    return false;
+                }
+
+                result = memory[address];
             } else {
                 return false;
             }
@@ -424,14 +492,13 @@ class Kernel {
                     return false;
                 }
             } else if (target.type == ADDRESS) {
-                if (target.value < MEMORY_SIZE) {
-                    process.memory[target.value] = value;
-                } else if (target.value < MEMORY_SIZE + FRAME_BUFFER_SIZE) {
-                    process.framebuffer[target.value - MEMORY_SIZE] = value;
-                } else {
+                int address = getAddress(process, target.value);
+                
+                if (address == -1) {
                     return false;
                 }
-                
+
+                memory[address] = value;
             } else {
                 return false;
             }
@@ -516,8 +583,9 @@ class Kernel {
             
             cout << "\033[H\033[2J";
 
-            for (int i = 0; i < process.framebuffer.size(); i++) {
-                int code = process.framebuffer[i];
+            for (int i = 0; i < 1; i++) {
+                // Temp
+                int code = memory[i];
 
                 if (i % FRAME_WIDTH == 0) {
                     frame += "\n";
@@ -928,12 +996,10 @@ class Kernel {
         };
 };
 
-
-
 const string directory = "programs";
 
 int main() {
-    Kernel kernel(MEMORY_SIZE, REGISTER_COUNT);
+    Kernel kernel(PAGE_COUNT, PAGE_SIZE);
 
     string fileName;
 
@@ -954,9 +1020,9 @@ int main() {
     ok = kernel.startExecution();
 
     if (ok) {
-        cout << "Program executed succesfully" << "\n";
+        cout << "All programs executed succesfully" << "\n";
     } else {
-        cout << "Error during program exectuion" << "\n";
+        cout << "Error during exectuion" << "\n";
     }
 
     return 0;
