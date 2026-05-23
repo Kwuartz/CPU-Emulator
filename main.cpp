@@ -381,26 +381,23 @@ class Kernel {
                         it = processes.erase(it);
                     } else {
                         it++;
-
-                        if (maxInstructions != -1) {
-                            maxInstructions--;
-
-                            if (maxInstructions == 0) {
-                                break;
-                            }
-                        }
                     }
                 }
 
-                if (maxInstructions == 0) {
-                    break;
+                if (maxInstructions != -1) {
+                    maxInstructions--;
+
+                    if (maxInstructions == 0) {
+                        cout << "Max instructions reached" << "\n";
+                        break;
+                    }
                 }
             }
 
             for (auto& process : processes) {
                 cleanupProcess(process);
             }
-            
+
             processes.clear();
             
             return true;
@@ -1066,8 +1063,6 @@ int main() {
         } else {
             cout << "Succesfully loaded .asm file: " << fileName <<"\n";
         }
-
-        std::cout << entry.path() << "\n";
     }
 
     cout << "Programs loaded succesfully" << "\n";
