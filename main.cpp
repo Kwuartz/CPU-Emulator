@@ -304,15 +304,20 @@ class Kernel {
 
         bool loadProgram(string directory, string name, int registerCount) {
             ifstream programFile(directory + name);
-            string programLine;
+
+            if (programFile.fail() == true) {
+                cout << "No program at the specified path: " << directory + name << "\n";
+                return false;
+            }
             
             int instructionNumber = 0;
             int lineNumber = 0;
-
+            string programLine;
+            
             int processId = processes.size();
-
             Process process(registerCount, name, processId);
-
+            
+            
             while (getline(programFile, programLine)) {
                 if (programLine.size() == 0 || programLine.front() == ';') {
                     // Comment
