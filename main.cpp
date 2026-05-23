@@ -98,16 +98,6 @@ unordered_map<string, Opcode> opcodeMap = {
     {"HALT", HALT}
 };
 
-struct CPU {
-    vector<int> memory;
-    vector<int> framebuffer;
-    vector<int> registers;
-    Flags flags;
-    int pc;
-
-    unordered_map<string, int> branchMap;
-};
-
 bool mapSymbol(int code, char& symbol) {
     auto it = symbolMap.find(code);
 
@@ -236,24 +226,62 @@ bool parseInstruction(Instruction& inst, const string& line) {
     return true;
 }
 
-class Kernel {
+struct CPU {
+    vector<int> memory;
+    vector<int> framebuffer;
+};
+
+class Process {
     public:
-        CPU cpu;
+        unordered_map<string, int> branchMap;
         vector<Instruction> instructions;
 
-        Kernel() {
-            cpu.memory = vector<int>(MEMORY_SIZE);
-            cpu.framebuffer = vector<int>(FRAME_BUFFER_SIZE);
-            cpu.registers = vector<int>(REGISTER_COUNT);
-            cpu.pc = 0;
+        vector<int> registers;
+        Flags flags;
+        int pc;
+
+        bool addPage(int pageNumber, int frameNumber) {
+            auto it = pageMap.find(pageNumber);
+
+            if (it != pageMap.end()) {
+                return false;
+            } else {
+                pageMap[pageNumber] = frameNumber;
+            }
+            
+            return true;
         }
 
-        bool loadProgram(string path) {
-            ifstream programFile(path);
+        int getFrameNumber(int pageNumber) {
+            auto it = pageMap.find(pageNumber);
 
+            if (it != pageMap.end()) {
+                return it->second;
+            }
+
+            return -1;
+        }
+
+    private:
+        unordered_map<int, int> pageMap;
+};
+
+class Kernel {
+    public:
+        Kernel(int memorySize, int registerCount) {
+            memory = vector<int>(memorySize);
+        }
+
+        bool loadProgram(string path, int registerCount) {
+            ifstream programFile(path);
             string programLine;
-            int lineNumber = 0;
+            
             int instructionNumber = 0;
+            int lineNumber = 0;
+
+            Process process;
+            process.registers = vector<int>(registerCount);
+            process.pc = 0;
 
             while (getline(programFile, programLine)) {
                 if (programLine.size() == 0 || programLine.front() == ';') {
@@ -262,7 +290,7 @@ class Kernel {
                     Instruction inst;
 
                     if (parseInstruction(inst, programLine)) {
-                        instructions.push_back(move(inst));
+                        process.instructions.push_back(move(inst));
                         instructionNumber++;
                     } else {
                         cout << "Instruction on line " << lineNumber << " is invalid: " << programLine << "\n";
@@ -270,7 +298,7 @@ class Kernel {
                     };
                     
                 } else if (isBranch(programLine)) {
-                    if (!parseBranch(cpu.branchMap, programLine, instructionNumber)) {
+                    if (!parseBranch(process.branchMap, programLine, instructionNumber)) {
                         cout << "Branch on line " << lineNumber << " is invalid: " << programLine << "\n";
                         return false;
                     }
@@ -285,7 +313,7 @@ class Kernel {
             return true;
         }
 
-        bool runProgram() {
+        bool startExecution() {
             while (cpu.pc != -1 && cpu.pc != instructions.size()) {
                 if (!executeInstruction(cpu, instructions[cpu.pc])) {
                     cout << "Instruction number " << to_string(cpu.pc) << " failed to execute" << "\n";
@@ -297,6 +325,9 @@ class Kernel {
         }
     
     private:
+    vector<Process> processes;
+        vector<int> memory;
+
         bool branch(CPU& cpu, const Argument& arg) {
             if (!arg.label.empty()) {
                 auto it = cpu.branchMap.find(arg.label);
@@ -851,7 +882,7 @@ class Kernel {
 const string directory = "programs";
 
 int main() {
-    Kernel kernel;
+    Kernel kernel(MEMORY_SIZE, REGISTER_COUNT);
 
     string fileName;
 
@@ -860,7 +891,7 @@ int main() {
 
     bool ok;
 
-    ok = kernel.loadProgram(directory + "/" + fileName);
+    ok = kernel.loadProgram(directory + "/" + fileName, REGISTER_COUNT);
     
     if (ok) {
         cout << "Program loaded succesfully" << "\n";
@@ -869,7 +900,7 @@ int main() {
         return 0;
     }
     
-    ok = kernel.runProgram();
+    ok = kernel.startExecution();
 
     if (ok) {
         cout << "Program executed succesfully" << "\n";
