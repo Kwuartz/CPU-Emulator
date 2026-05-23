@@ -1,6 +1,7 @@
 #include <iostream>
 
 #include <stdexcept>
+#include <algorithm>
 #include <thread>
 #include <chrono>
 
@@ -11,7 +12,7 @@
 
 using namespace std;
 
-const int MEMORY_SIZE = 1024;
+const int MEMORY_SIZE = 4096;
 const int PAGE_SIZE = 128;
 const int PAGE_COUNT = MEMORY_SIZE / PAGE_SIZE;
 const int REGISTER_COUNT = 20;
@@ -229,11 +230,6 @@ bool parseInstruction(Instruction& inst, const string& line) {
     return true;
 }
 
-struct Process {
-    vector<int> memory;
-    vector<int> framebuffer;
-};
-
 class Process {
     public:
         unordered_map<string, int> branchMap;
@@ -244,6 +240,18 @@ class Process {
         string name;
         int id;
         int pc;
+
+        Process(int registerCount, string processName, int processId) {
+            registers = vector<int>(registerCount);
+            name = processName;
+
+            id = processId;
+            pc = 0;
+        }
+
+        string getDescriptor() {
+            return "Process ID " + to_string(id) + " (" + name + ")";
+        }
 
         bool addPage(int pageNumber, int frameNumber) {
             auto it = pageMap.find(pageNumber);
@@ -301,11 +309,9 @@ class Kernel {
             int instructionNumber = 0;
             int lineNumber = 0;
 
-            Process process;
-            process.registers = vector<int>(registerCount);
-            process.name = name;
-            process.id = processes.size() - 1;
-            process.pc = 0;
+            int processId = processes.size();
+
+            Process process(registerCount, name, processId);
 
             while (getline(programFile, programLine)) {
                 if (programLine.size() == 0 || programLine.front() == ';') {
@@ -334,6 +340,8 @@ class Kernel {
                 lineNumber++;
             }
 
+            processes.push_back(process);
+
             return true;
         }
 
@@ -342,17 +350,18 @@ class Kernel {
                 for (auto it = processes.begin(); it != processes.end();) {
                     if (!executeInstruction(*it, it->instructions[it->pc])) {
                         cout << "Instruction number " << to_string(it->pc) << " failed to execute" << "\n";
-                        cout << "Process ID " << to_string(it->id) << " (" << it->name << ") exited with an error" << "\n";
+                        cout << it->getDescriptor() << " exited with an error" << "\n";
 
                         bool ok = cleanupProcess(*it);
                         it = processes.erase(it);
 
                         if (ok) {
-                            cout << "Process ID " << to_string(it->id) << " (" << it->name << ") succesfully cleaned up" << "\n";
+                            cout << it->getDescriptor() << " succesfully cleaned up" << "\n";
                         } else {
-                            cout << "Process ID " << to_string(it->id) << " (" << it->name << ") cleanup failed" << "\n";
-                            return false;
+                            cout << it->getDescriptor() << " cleanup failed" << "\n";
                         }
+
+                        return false;
 
                         continue;
                     }
@@ -362,9 +371,9 @@ class Kernel {
                         it = processes.erase(it);
 
                         if (ok) {
-                            cout << "Process ID " << to_string(it->id) << " (" << it->name << ") succesfully cleaned up" << "\n";
+                            cout << it->getDescriptor() << "succesfully cleaned up" << "\n";
                         } else {
-                            cout << "Process ID " << to_string(it->id) << " (" << it->name << ") cleanup failed" << "\n";
+                            cout << it->getDescriptor() << " cleanup failed" << "\n";
                             return false;
                         }
                     } else {
@@ -393,13 +402,19 @@ class Kernel {
             // Page fault
             if (frameNumber == -1) { 
                 frameNumber = getFreeFrame();
+
+                if (frameNumber == -1) {
+                    cout << "CRITICAL: " << process.getDescriptor() << " cannot be allocated a frame as memory is full" << "\n";
+                    return -1;
+                }
+
                 process.addPage(pageNumber, frameNumber);   
             }
             
             int offset = virtualAddresss % frameSize;
             int address = frameNumber * frameSize + offset;
 
-            if (address < memorySize) {
+            if (address >= memorySize) {
                 return -1;
             }
 
@@ -433,7 +448,7 @@ class Kernel {
         }
 
         bool returnPage(int frameNumber) {
-            if (std::find(frameHeap.begin(), frameHeap.end(), frameNumber) == frameHeap.end()) {
+            if (find(frameHeap.begin(), frameHeap.end(), frameNumber) == frameHeap.end()) {
                 frameHeap.push_back(frameNumber);
                 return true;
             } else {
