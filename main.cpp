@@ -1,5 +1,6 @@
 #include <iostream>
 
+#include <filesystem>
 #include <stdexcept>
 #include <algorithm>
 #include <thread>
@@ -1011,26 +1012,37 @@ class Kernel {
         };
 };
 
-const string directory = "programs";
+const string programsDirectory = "programs";
+namespace fs = filesystem;
 
 int main() {
     Kernel kernel(PAGE_COUNT, PAGE_SIZE);
 
-    string fileName;
-
-    cout << "Enter file name: ";
-    cin >> fileName;
-
     bool ok;
 
-    ok = kernel.loadProgram(directory + "/", fileName, REGISTER_COUNT);
-    
-    if (ok) {
-        cout << "Program loaded succesfully" << "\n";
-    } else {
-        cout << "Error while loading program" << "\n";
-        return 0;
+    for (const auto& entry : fs::directory_iterator(programsDirectory)) {
+        fs::path filePath = entry.path();
+        string fileName = filePath.filename().string();
+        string extension = filePath.extension().string();
+        
+        if (extension != ".asm") {
+            cout << " File not loaded as it is not a .asm file: " << fileName << "\n";
+            continue;
+        }
+
+        ok = kernel.loadProgram(programsDirectory, fileName, REGISTER_COUNT);
+        
+        if (!ok) {
+            cout << "Error while loading .asm file: " << fileName <<"\n";
+            return 0;
+        } else {
+            cout << "Succesfully loaded ading .asm file: " << fileName <<"\n";
+        }
+
+        std::cout << entry.path() << "\n";
     }
+
+    cout << "All programs loaded succesfully" << "\n";
     
     ok = kernel.startExecution();
 
