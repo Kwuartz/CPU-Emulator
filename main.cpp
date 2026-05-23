@@ -19,9 +19,13 @@ const int PAGE_SIZE = 128;
 const int PAGE_COUNT = MEMORY_SIZE / PAGE_SIZE;
 const int REGISTER_COUNT = 20;
 
-const int FRAME_WIDTH = 100;
-const int FRAME_HEIGHT = 30;
+
+const int FRAME_WIDTH = 64;
+const int FRAME_HEIGHT = 32;
 const int FRAME_BUFFER_SIZE = FRAME_HEIGHT * FRAME_WIDTH;
+
+const int FRAME_BUFFER_START = 4096;
+const int FRAME_BUFFER_END = FRAME_BUFFER_START + FRAME_BUFFER_SIZE;
 
 const int MAX_TEST_INSTRUCTIONS = 1000;
 
@@ -314,7 +318,7 @@ class Kernel {
             }
             
             int instructionNumber = 0;
-            int lineNumber = 0;
+            int lineNumber = 1;
             string programLine;
             
             int processId = processes.size();
@@ -322,8 +326,13 @@ class Kernel {
             
             
             while (getline(programFile, programLine)) {
+                programLine.erase(
+                    remove(programLine.begin(), programLine.end(), '\r'),
+                    programLine.end()
+                );
+
                 if (programLine.size() == 0 || programLine.front() == ';') {
-                    // Comment
+                    // Empty line or comment
                 } else if (isInstruction(programLine)) {
                     Instruction inst;
 
@@ -610,14 +619,19 @@ class Kernel {
             return true;
         }
 
-        bool flushFrame(const Process& process) {
+        bool flushFrame(Process& process) {
             string frame;
             
             cout << "\033[H\033[2J";
 
-            for (int i = 0; i < 1; i++) {
-                // Temp
-                int code = memory[i];
+            for (int i = FRAME_BUFFER_START; i < FRAME_BUFFER_END; i++) {
+                int address = getAddress(process, i);
+                
+                if (address == -1) {
+                    return false;
+                }
+
+                int code = memory[address];
 
                 if (i % FRAME_WIDTH == 0) {
                     frame += "\n";
