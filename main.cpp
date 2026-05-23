@@ -1,6 +1,7 @@
 #include <iostream>
 
 #include <filesystem>
+#include <ncurses.h>
 #include <stdexcept>
 #include <algorithm>
 #include <cstdlib>
@@ -19,11 +20,13 @@ const int PAGE_SIZE = 128;
 const int PAGE_COUNT = MEMORY_SIZE / PAGE_SIZE;
 const int REGISTER_COUNT = 20;
 
-
 const int FRAME_WIDTH = 64;
 const int FRAME_HEIGHT = 32;
-const int FRAME_BUFFER_SIZE = FRAME_HEIGHT * FRAME_WIDTH;
+const int FRAME_SPACING = 4;
 
+const int LOG_WINDOW_HEIGHT = 20;
+
+const int FRAME_BUFFER_SIZE = FRAME_HEIGHT * FRAME_WIDTH;
 const int FRAME_BUFFER_START = 4096;
 const int FRAME_BUFFER_END = FRAME_BUFFER_START + FRAME_BUFFER_SIZE;
 
@@ -239,6 +242,8 @@ bool parseInstruction(Instruction& inst, const string& line) {
 
 class Process {
     public:
+        WINDOW* window;
+
         unordered_map<string, int> branchMap;
         vector<Instruction> instructions;
 
@@ -249,11 +254,16 @@ class Process {
         int pc;
 
         Process(int registerCount, string processName, int processId) {
-            registers = vector<int>(registerCount);
-            name = processName;
+            int windowsPerRow = COLS / (FRAME_WIDTH + 1);
+            int windowRow = processId / windowsPerRow;
 
-            id = processId;
+            window = newwin(FRAME_HEIGHT + 2, FRAME_WIDTH + 2, windowRow * (FRAME_HEIGHT + FRAME_SPACING + 1), processId * (FRAME_WIDTH + FRAME_SPACING + 1));
+            
+            registers = vector<int>(registerCount);
             pc = 0;
+
+            name = processName;
+            id = processId;
         }
 
         string getDescriptor() {
@@ -297,6 +307,8 @@ class Process {
 };
 
 class Kernel {
+    WINDOW* logWindow;
+
     public:
         Kernel(int pageCount, int pageSize) {
             frameSize = pageSize;
@@ -307,6 +319,12 @@ class Kernel {
             for (int i = 0; i < frameCount; i++) {
                 frameHeap.push_back(i);
             }
+
+            logWindow = newwin(LOG_WINDOW_HEIGHT, COLS, 1, 1);
+            scrollok(logWindow, true);
+            wsetscrreg(logWindow, 1, LOG_WINDOW_HEIGHT - 2);
+            box(logWindow, 0, 0);
+            wrefresh(logWindow);
         }
 
         bool loadProgram(string directory, string name, int registerCount) {
@@ -358,6 +376,7 @@ class Kernel {
             }
 
             processes.push_back(process);
+            updateLogWindow();
 
             return true;
         }
@@ -408,8 +427,15 @@ class Kernel {
             }
 
             processes.clear();
-            
+            endwin();
+
             return true;
+        }
+
+        void log(const string& message) {
+            wprintw(logWindow, " %s\n", message.c_str());
+            box(logWindow, 0, 0);
+            wrefresh(logWindow);
         }
     
     private:
@@ -419,6 +445,15 @@ class Kernel {
 
         int memorySize;
         int frameSize;
+
+        void updateLogWindow() {
+            int windowsPerRow = COLS / (FRAME_WIDTH + 1);
+            int windowRow = (processes.size() - 1) / windowsPerRow;
+            int logY = (windowRow + 1) * (FRAME_HEIGHT + FRAME_SPACING + 1) + FRAME_SPACING;
+
+            mvwin(logWindow, logY + 1, 1);
+            wrefresh(logWindow);
+        }
 
         int getAddress(Process& process, int virtualAddresss) {
             int pageNumber = virtualAddresss / frameSize;
@@ -448,6 +483,8 @@ class Kernel {
         }
 
         bool cleanupProcess(const Process &process) {
+            delwin(process.window);
+
             vector<int> frameNumbers = process.getAllFrameNumbers();
 
             bool ok;
@@ -620,34 +657,28 @@ class Kernel {
         }
 
         bool flushFrame(Process& process) {
-            string frame;
-            
-            cout << "\033[H\033[2J";
+            for (int row = 0; row < FRAME_HEIGHT; row++) {
+                for (int col = 0; col < FRAME_WIDTH; col++) {
+                    int virtualAddress = FRAME_BUFFER_START + row * FRAME_WIDTH + col;
+                    int address = getAddress(process, virtualAddress);
 
-            for (int i = FRAME_BUFFER_START; i < FRAME_BUFFER_END; i++) {
-                int address = getAddress(process, i);
-                
-                if (address == -1) {
-                    return false;
-                }
+                    if (address == -1) {
+                        return false;
+                    }
 
-                int code = memory[address];
+                    int code = memory[address];
 
-                if (i % FRAME_WIDTH == 0) {
-                    frame += "\n";
-                }
-
-                char symbol;
-
-                if (mapSymbol(code, symbol)) {
-                    frame += symbol;
-                } else {
-                    return false;
+                    char symbol;
+                    if (mapSymbol(code, symbol)) {
+                        mvwaddch(process.window, row + 1, col + 1, symbol);
+                    } else {
+                        return false;
+                    }
                 }
             }
 
-            cout << frame << endl;
-
+            box(process.window, 0, 0);
+            wrefresh(process.window);
             return true;
         }
 
@@ -995,7 +1026,6 @@ class Kernel {
                     break;
                 
                 case FLUSH:
-                    cout << "Flush" << endl;
                     ok = flushFrame(process);
 
                     if (!ok) {
@@ -1051,6 +1081,10 @@ const string programsDirectory = "programs/";
 namespace fs = filesystem;
 
 int main() {
+    initscr();
+    noecho();
+    curs_set(0);
+
     Kernel kernel(PAGE_COUNT, PAGE_SIZE);
 
     bool ok;
