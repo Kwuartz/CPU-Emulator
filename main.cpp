@@ -1,6 +1,5 @@
-#include <iostream>
-
 #include <filesystem>
+#include <ncurses.h>
 #include <stdexcept>
 #include <algorithm>
 #include <cstdlib>
@@ -19,9 +18,16 @@ const int PAGE_SIZE = 128;
 const int PAGE_COUNT = MEMORY_SIZE / PAGE_SIZE;
 const int REGISTER_COUNT = 20;
 
-const int FRAME_WIDTH = 100;
-const int FRAME_HEIGHT = 30;
+const int FRAME_WIDTH = 64;
+const int FRAME_HEIGHT = 32;
+const int FRAME_SPACING_X = 1;
+const int FRAME_SPACING_Y = 0;
+
+const int LOG_WINDOW_HEIGHT = 10;
+
 const int FRAME_BUFFER_SIZE = FRAME_HEIGHT * FRAME_WIDTH;
+const int FRAME_BUFFER_START = 4096;
+const int FRAME_BUFFER_END = FRAME_BUFFER_START + FRAME_BUFFER_SIZE;
 
 const int MAX_TEST_INSTRUCTIONS = 1000;
 
@@ -189,7 +195,6 @@ bool parseArgument(Argument& arg, const string& token) {
     }
 
     if (cleanToken.size() == 0) {
-        cout << "Empty argument" << "\n";
         return false;
     }
 
@@ -198,7 +203,6 @@ bool parseArgument(Argument& arg, const string& token) {
     try {
         value = stoi(cleanToken);
     } catch (...) {
-        cout << "Non integer argument" << "\n";
         return false;
     }
 
@@ -225,7 +229,6 @@ bool parseInstruction(Instruction& inst, const string& line) {
         if (parseArgument(arg, token)) {
             inst.args.push_back(arg);
         } else {
-            cout << "Invalid argument: " << token << "\n";
             return false;
         }
     };
@@ -235,6 +238,8 @@ bool parseInstruction(Instruction& inst, const string& line) {
 
 class Process {
     public:
+        WINDOW* window;
+
         unordered_map<string, int> branchMap;
         vector<Instruction> instructions;
 
@@ -245,15 +250,35 @@ class Process {
         int pc;
 
         Process(int registerCount, string processName, int processId) {
-            registers = vector<int>(registerCount);
-            name = processName;
+            int windowWidth = FRAME_WIDTH + 2;
+            int windowHeight = FRAME_HEIGHT + 2;
 
-            id = processId;
+            window = newwin(windowHeight, windowWidth, 0, 0);
+            registers = vector<int>(registerCount);
             pc = 0;
+
+            name = processName;
+            id = processId;
+
+            updateWindowPosition();
         }
 
         string getDescriptor() {
             return "Process ID " + to_string(id) + " (" + name + ")";
+        }
+
+        void updateWindowPosition() {
+            int programWidth = FRAME_WIDTH + 2;
+            int programHeight = FRAME_HEIGHT + 2;
+            int programDistanceX = programWidth + FRAME_SPACING_X;
+            int programDistanceY = programHeight + FRAME_SPACING_Y;
+            int windowsPerRow = max(1, COLS / programDistanceX);
+            int windowRow = id / windowsPerRow;
+            int windowCol = id % windowsPerRow;
+
+            mvwin(window, windowRow * programDistanceY, windowCol * programDistanceX);
+            touchwin(window);
+            wrefresh(window);
         }
 
         bool addPage(int pageNumber, int frameNumber) {
@@ -293,6 +318,11 @@ class Process {
 };
 
 class Kernel {
+    WINDOW* logWindow;
+    int logWindowHeight;
+    int logWindowWidth;
+    int logCursorY;
+
     public:
         Kernel(int pageCount, int pageSize) {
             frameSize = pageSize;
@@ -303,27 +333,40 @@ class Kernel {
             for (int i = 0; i < frameCount; i++) {
                 frameHeap.push_back(i);
             }
+
+            logWindowHeight = LOG_WINDOW_HEIGHT;
+            logWindowWidth = COLS;
+            logWindow = newwin(logWindowHeight, logWindowWidth, 0, 0);
+            logCursorY = 1;
+            updateLogWindow();
         }
 
         bool loadProgram(string directory, string name, int registerCount) {
             ifstream programFile(directory + name);
 
             if (programFile.fail() == true) {
-                cout << "No program at the specified path: " << directory + name << "\n";
+                log("No program at the specified path: " + directory + name);
                 return false;
             }
             
             int instructionNumber = 0;
-            int lineNumber = 0;
+            int lineNumber = 1;
             string programLine;
             
             int processId = processes.size();
-            Process process(registerCount, name, processId);
+            processes.emplace_back(registerCount, name, processId);
+            updateLogWindow();
+            Process& process = processes.back();
             
             
             while (getline(programFile, programLine)) {
+                programLine.erase(
+                    remove(programLine.begin(), programLine.end(), '\r'),
+                    programLine.end()
+                );
+
                 if (programLine.size() == 0 || programLine.front() == ';') {
-                    // Comment
+                    // Empty line or comment
                 } else if (isInstruction(programLine)) {
                     Instruction inst;
 
@@ -331,24 +374,28 @@ class Kernel {
                         process.instructions.push_back(move(inst));
                         instructionNumber++;
                     } else {
-                        cout << "Instruction on line " << lineNumber << " is invalid: " << programLine << "\n";
+                        log("Instruction on line " + to_string(lineNumber) + " is invalid: " + programLine);
+                        cleanupProcess(process);
+                        processes.pop_back();
                         return false;
                     };
                     
                 } else if (isBranch(programLine)) {
                     if (!parseBranch(process.branchMap, programLine, instructionNumber)) {
-                        cout << "Branch on line " << lineNumber << " is invalid: " << programLine << "\n";
+                        log("Branch on line " + to_string(lineNumber) + " is invalid: " + programLine);
+                        cleanupProcess(process);
+                        processes.pop_back();
                         return false;
                     }
                 } else {
-                    cout << "Line " << lineNumber << " not recognised as instruction or branch: " << programLine << "\n";
+                    log("Line " + to_string(lineNumber) + " not recognised as instruction or branch: " + programLine);
+                    cleanupProcess(process);
+                    processes.pop_back();
                     return false;
                 }
 
                 lineNumber++;
             }
-
-            processes.push_back(process);
 
             return true;
         }
@@ -360,22 +407,22 @@ class Kernel {
                         bool ok = cleanupProcess(*it);
                         
                         if (ok) {
-                            cout << it->getDescriptor() << "succesfully cleaned up" << "\n";
+                            log(it->getDescriptor() + "succesfully cleaned up");
                         } else {
-                            cout << it->getDescriptor() << " cleanup failed" << "\n";
+                            log(it->getDescriptor() + " cleanup failed");
                         }
 
                         it = processes.erase(it);
                     } else if (!executeInstruction(*it, it->instructions[it->pc])) {
-                        cout << "Instruction number " << to_string(it->pc) << " failed to execute" << "\n";
-                        cout << it->getDescriptor() << " exited with an error" << "\n";
+                        log("Instruction number " + to_string(it->pc) + " failed to execute");
+                        log(it->getDescriptor() + " exited with an error");
 
                         bool ok = cleanupProcess(*it);
                         
                         if (ok) {
-                            cout << it->getDescriptor() << " succesfully cleaned up" << "\n";
+                            log(it->getDescriptor() + " succesfully cleaned up");
                         } else {
-                            cout << it->getDescriptor() << " cleanup failed" << "\n";
+                            log(it->getDescriptor() + " cleanup failed");
                         }
 
                         it = processes.erase(it);
@@ -388,7 +435,7 @@ class Kernel {
                     maxInstructions--;
 
                     if (maxInstructions == 0) {
-                        cout << "Max instructions reached" << "\n";
+                        log("Max instructions reached");
                         break;
                     }
                 }
@@ -399,8 +446,24 @@ class Kernel {
             }
 
             processes.clear();
-            
+
             return true;
+        }
+
+        void log(const string& message) {
+            int contentWidth = max(0, logWindowWidth - 2);
+
+            if (logCursorY > logWindowHeight - 2) {
+                wscrl(logWindow, 1);
+                logCursorY = logWindowHeight - 2;
+            }
+
+            mvwhline(logWindow, logCursorY, 1, ' ', contentWidth);
+            mvwprintw(logWindow, logCursorY, 1, "%.*s", contentWidth, message.c_str());
+            logCursorY++;
+
+            box(logWindow, 0, 0);
+            wrefresh(logWindow);
         }
     
     private:
@@ -410,6 +473,31 @@ class Kernel {
 
         int memorySize;
         int frameSize;
+
+        void updateLogWindow() {
+            int programWidth = FRAME_WIDTH + 2;
+            int programHeight = FRAME_HEIGHT + 2;
+            int programDistanceX = programWidth + FRAME_SPACING_X;
+            int programDistanceY = programHeight + FRAME_SPACING_Y;
+            int windowsPerRow = max(1, COLS / programDistanceX);
+            int processCount = processes.size();
+            int processRows = max(1, (processCount + windowsPerRow - 1) / windowsPerRow);
+            int logY = processRows * programDistanceY;
+
+            werase(logWindow);
+            wrefresh(logWindow);
+
+            logWindowHeight = LOG_WINDOW_HEIGHT;
+            logWindowWidth = COLS;
+
+            wresize(logWindow, logWindowHeight, logWindowWidth);
+            mvwin(logWindow, logY, 0);
+            scrollok(logWindow, true);
+            wsetscrreg(logWindow, 1, logWindowHeight - 2);
+            logCursorY = 1;
+            box(logWindow, 0, 0);
+            wrefresh(logWindow);
+        }
 
         int getAddress(Process& process, int virtualAddresss) {
             int pageNumber = virtualAddresss / frameSize;
@@ -421,7 +509,7 @@ class Kernel {
                 frameNumber = getFreeFrame();
 
                 if (frameNumber == -1) {
-                    cout << "CRITICAL: " << process.getDescriptor() << " cannot be allocated a frame as memory is full" << "\n";
+                    log("CRITICAL: " + process.getDescriptor() + " cannot be allocated a frame as memory is full");
                     return -1;
                 }
 
@@ -439,6 +527,8 @@ class Kernel {
         }
 
         bool cleanupProcess(const Process &process) {
+            delwin(process.window);
+
             vector<int> frameNumbers = process.getAllFrameNumbers();
 
             bool ok;
@@ -610,30 +700,29 @@ class Kernel {
             return true;
         }
 
-        bool flushFrame(const Process& process) {
-            string frame;
-            
-            cout << "\033[H\033[2J";
+        bool flushFrame(Process& process) {
+            for (int row = 0; row < FRAME_HEIGHT; row++) {
+                for (int col = 0; col < FRAME_WIDTH; col++) {
+                    int virtualAddress = FRAME_BUFFER_START + row * FRAME_WIDTH + col;
+                    int address = getAddress(process, virtualAddress);
 
-            for (int i = 0; i < 1; i++) {
-                // Temp
-                int code = memory[i];
+                    if (address == -1) {
+                        return false;
+                    }
 
-                if (i % FRAME_WIDTH == 0) {
-                    frame += "\n";
-                }
+                    int code = memory[address];
 
-                char symbol;
-
-                if (mapSymbol(code, symbol)) {
-                    frame += symbol;
-                } else {
-                    return false;
+                    char symbol;
+                    if (mapSymbol(code, symbol)) {
+                        mvwaddch(process.window, row + 1, col + 1, symbol);
+                    } else {
+                        return false;
+                    }
                 }
             }
 
-            cout << frame << endl;
-
+            box(process.window, 0, 0);
+            wrefresh(process.window);
             return true;
         }
 
@@ -645,7 +734,7 @@ class Kernel {
                 case LDR: {
                     if (inst.args.size() < 2) {
                         ok = false;
-                        cout << "Not enough arguments for load register operation" << "\n";
+                        log("Not enough arguments for load register operation");
                         break;
                     }
 
@@ -658,7 +747,7 @@ class Kernel {
                     ok = store(process, inst.args[0], sourceAddress);
 
                     if (!ok) {
-                        cout << "Load register operation failed" << "\n";
+                        log("Load register operation failed");
                     }
 
                     break;
@@ -667,7 +756,7 @@ class Kernel {
                 case STR: {
                     if (inst.args.size() < 2) {
                         ok = false;
-                        cout << "Not enough arguments for store register operation" << "\n";
+                        log("Not enough arguments for store register operation");
                         break;
                     }
 
@@ -680,7 +769,7 @@ class Kernel {
                     ok = store(process, targetAddress, inst.args[0]);
 
                     if (!ok)  {
-                        cout << "Store register operation failed" << "\n";
+                        log("Store register operation failed");
                     }
 
                     break;
@@ -688,27 +777,27 @@ class Kernel {
 
                 case MOV:
                     if (inst.args.size() < 2) {
-                        cout << "Not enough arguments for move operation" << "\n";
+                        log("Not enough arguments for move operation");
                         ok = false;
                         break;
                     }
 
                     if (inst.args[0].type != REGISTER) {
                         ok = false;
-                        cout << "Only a register address can be provided as the first argument of a move operation" << "\n";
+                        log("Only a register address can be provided as the first argument of a move operation");
                         break;
                     }
 
                     if (inst.args[1].type == ADDRESS) {
                         ok = false;
-                        cout << "Memory addresses can not be provided to a move operation" << "\n";
+                        log("Memory addresses can not be provided to a move operation");
                         break;
                     }
 
                     ok = store(process, inst.args[0], inst.args[1]);
 
                     if (!ok)  {
-                        cout << "Move operation failed" << "\n";
+                        log("Move operation failed");
                     }
 
                     break;
@@ -716,26 +805,26 @@ class Kernel {
                 case ADD:
                     if (inst.args.size() < 3) {
                         ok = false;
-                        cout << "Not enough arguments for add operation" << "\n";
+                        log("Not enough arguments for add operation");
                         break;
                     }
 
                     if (inst.args[0].type != REGISTER || inst.args[1].type != REGISTER) {
                         ok = false;
-                        cout << "Only register addresses can be provided to the first 2 arguments of an add operation" << "\n";
+                        log("Only register addresses can be provided to the first 2 arguments of an add operation");
                         break;
                     }
 
                     if (inst.args[2].type == ADDRESS) {
                         ok = false;
-                        cout << "Memory addresses can not be provided as an operand to an add operation" << "\n";
+                        log("Memory addresses can not be provided as an operand to an add operation");
                         break;
                     }
 
                     ok = add(process, inst.args[0], inst.args[1], inst.args[2], 1);
 
                     if (!ok)  {
-                        cout << "Add operation failed" << "\n";
+                        log("Add operation failed");
                     }
 
                     break;
@@ -743,26 +832,26 @@ class Kernel {
                 case SUB:
                     if (inst.args.size() < 3) {
                         ok = false;
-                        cout << "Not enough arguments for subtract operation" << "\n";
+                        log("Not enough arguments for subtract operation");
                         break;
                     }
 
                     if (inst.args[0].type != REGISTER || inst.args[1].type != REGISTER) {
                         ok = false;
-                        cout << "Only register addresses can be provided to the first 2 arguments of a subtract operation" << "\n";
+                        log("Only register addresses can be provided to the first 2 arguments of a subtract operation");
                         break;
                     }
 
                     if (inst.args[2].type == ADDRESS) {
                         ok = false;
-                        cout << "Memory addresses can not be provided as an operand to a subtract operation" << "\n";
+                        log("Memory addresses can not be provided as an operand to a subtract operation");
                         break;
                     }
 
                     ok = add(process, inst.args[0], inst.args[1], inst.args[2], -1);
 
                     if (!ok)  {
-                        cout << "Add operation failed" << "\n";
+                        log("Add operation failed");
                     }
 
                     break;
@@ -770,26 +859,26 @@ class Kernel {
                 case MUL:
                     if (inst.args.size() < 3) {
                         ok = false;
-                        cout << "Not enough arguments for multiply operation" << "\n";
+                        log("Not enough arguments for multiply operation");
                         break;
                     }
 
                     if (inst.args[0].type != REGISTER || inst.args[1].type != REGISTER) {
                         ok = false;
-                        cout << "Only register addresses can be provided to the first 2 arguments of a multiply operation" << "\n";
+                        log("Only register addresses can be provided to the first 2 arguments of a multiply operation");
                         break;
                     }
 
                     if (inst.args[2].type == ADDRESS) {
                         ok = false;
-                        cout << "Memory addresses can not be provided as an operand to a multiply operation" << "\n";
+                        log("Memory addresses can not be provided as an operand to a multiply operation");
                         break;
                     }
 
                     ok = multiply(process, inst.args[0], inst.args[1], inst.args[2]);
 
                     if (!ok)  {
-                        cout << "Multiply operation failed" << "\n";
+                        log("Multiply operation failed");
                     }
 
                     break;
@@ -797,26 +886,26 @@ class Kernel {
                 case LSL:
                     if (inst.args.size() < 3) {
                         ok = false;
-                        cout << "Not enough arguments for logical shift left operation" << "\n";
+                        log("Not enough arguments for logical shift left operation");
                         break;
                     }
 
                     if (inst.args[0].type != REGISTER || inst.args[1].type != REGISTER) {
                         ok = false;
-                        cout << "Only register addresses can be provided to the first 2 arguments of a logical shift left operation" << "\n";
+                        log("Only register addresses can be provided to the first 2 arguments of a logical shift left operation");
                         break;
                     }
 
                     if (inst.args[2].type == ADDRESS) {
                         ok = false;
-                        cout << "Memory addresses can not be provided as an operand to a logical shift left operation" << "\n";
+                        log("Memory addresses can not be provided as an operand to a logical shift left operation");
                         break;
                     }
 
                     ok = shift(process, inst.args[0], inst.args[1], inst.args[2], 1);
 
                     if (!ok)  {
-                        cout << "Logical shift left operation failed" << "\n";
+                        log("Logical shift left operation failed");
                     }
 
                     break;
@@ -824,26 +913,26 @@ class Kernel {
                 case LSR:
                     if (inst.args.size() < 3) {
                         ok = false;
-                        cout << "Not enough arguments for logical shift right operation" << "\n";
+                        log("Not enough arguments for logical shift right operation");
                         break;
                     }
 
                     if (inst.args[0].type != REGISTER || inst.args[1].type != REGISTER) {
                         ok = false;
-                        cout << "Only register addresses can be provided to the first 2 arguments of a logical shift right operation" << "\n";
+                        log("Only register addresses can be provided to the first 2 arguments of a logical shift right operation");
                         break;
                     }
 
                     if (inst.args[2].type == ADDRESS) {
                         ok = false;
-                        cout << "Memory addresses can not be provided as an operand to a logical shift right operation" << "\n";
+                        log("Memory addresses can not be provided as an operand to a logical shift right operation");
                         break;
                     }
 
                     ok = shift(process, inst.args[0], inst.args[1], inst.args[2], -1);
 
                     if (!ok)  {
-                        cout << "Logical shift right operation failed" << "\n";
+                        log("Logical shift right operation failed");
                     }
 
                     break;
@@ -851,26 +940,26 @@ class Kernel {
                 case CMP:
                     if (inst.args.size() < 2) {
                         ok = false;
-                        cout << "Not enough arguments for compare operation" << "\n";
+                        log("Not enough arguments for compare operation");
                         break;
                     }
 
                     if (inst.args[0].type != REGISTER) {
                         ok = false;
-                        cout << "Only a register address can be provided as the first argument of a compare operation" << "\n";
+                        log("Only a register address can be provided as the first argument of a compare operation");
                         break;
                     }
 
                     if (inst.args[1].type == ADDRESS) {
                         ok = false;
-                        cout << "A memory address can not be provided as the operarond of a compare operation" << "\n";
+                        log("A memory address can not be provided as the operarond of a compare operation");
                         break;
                     }
 
                     ok = compare(process, inst.args[0], inst.args[1]);
 
                     if (!ok) {
-                        cout << "Compare failed" << "\n";
+                        log("Compare failed");
                     }
 
                     break;
@@ -878,7 +967,7 @@ class Kernel {
                 case B:
                     if (inst.args.size() < 1) {
                         ok = false;
-                        cout << "Not enough arguments for branch operation" << "\n";
+                        log("Not enough arguments for branch operation");
                         break;
                     }
 
@@ -887,7 +976,7 @@ class Kernel {
                     if (ok) {
                         incrementPC = false;
                     } else {
-                        cout << "Branch failed" << "\n";
+                        log("Branch failed");
                     }
                     
                     break;
@@ -895,7 +984,7 @@ class Kernel {
                 case BEQ:
                     if (inst.args.size() < 1) {
                         ok = false;
-                        cout << "Not enough arguments for branch operation" << "\n";
+                        log("Not enough arguments for branch operation");
                         break;
                     }
 
@@ -909,7 +998,7 @@ class Kernel {
                     if (ok) {
                         incrementPC = false;
                     } else {
-                        cout << "Branch failed" << "\n";
+                        log("Branch failed");
                     }
 
                     break;
@@ -917,7 +1006,7 @@ class Kernel {
                 case BNE:
                     if (inst.args.size() < 1) {
                         ok = false;
-                        cout << "Not enough arguments for branch operation" << "\n";
+                        log("Not enough arguments for branch operation");
                         break;
                     }
 
@@ -931,7 +1020,7 @@ class Kernel {
                     if (ok) {
                         incrementPC = false;
                     } else {
-                        cout << "Branch failed" << "\n";
+                        log("Branch failed");
                     }
 
                     break;
@@ -939,7 +1028,7 @@ class Kernel {
                 case BGT:
                     if (inst.args.size() < 1) {
                         ok = false;
-                        cout << "Not enough arguments for branch operation" << "\n";
+                        log("Not enough arguments for branch operation");
                         break;
                     }
 
@@ -953,7 +1042,7 @@ class Kernel {
                     if (ok) {
                         incrementPC = false;
                     } else {
-                        cout << "Branch failed" << "\n";
+                        log("Branch failed");
                     }
 
                     break;
@@ -961,7 +1050,7 @@ class Kernel {
                 case BLT:
                     if (inst.args.size() < 1) {
                         ok = false;
-                        cout << "Not enough arguments for branch operation" << "\n";
+                        log("Not enough arguments for branch operation");
                         break;
                     }
 
@@ -975,17 +1064,16 @@ class Kernel {
                     if (ok) {
                         incrementPC = false;
                     } else {
-                        cout << "Branch failed" << "\n";
+                        log("Branch failed");
                     }
 
                     break;
                 
                 case FLUSH:
-                    cout << "Flush" << endl;
                     ok = flushFrame(process);
 
                     if (!ok) {
-                        cout << "Flush frame failed" << "\n";
+                        log("Flush frame failed");
                     }
 
                     break;
@@ -993,7 +1081,7 @@ class Kernel {
                 case WAIT:
                     if (inst.args.size() < 1) {
                         ok = false;
-                        cout << "Not enough arguments for wait operation" << "\n";
+                        log("Not enough arguments for wait operation");
                         break;
                     }
 
@@ -1001,7 +1089,7 @@ class Kernel {
 
                     if (!getValue(process, inst.args[0], delay)) {
                         ok = false;
-                        cout << "Wait delay argument parsing failed" << "\n";
+                        log("Wait delay argument parsing failed");
                         break;
                     }
 
@@ -1009,7 +1097,7 @@ class Kernel {
                     ok = true;
 
                     if (!ok) {
-                        cout << "Wait failed" << "\n";
+                        log("Wait failed");
                     }
 
                     break;
@@ -1037,12 +1125,23 @@ const string programsDirectory = "programs/";
 namespace fs = filesystem;
 
 int main() {
+    bool isGitlabCI = checkGitLabCI();
+    if (isGitlabCI) return 0;
+
+    initscr();
+    noecho();
+    curs_set(0);
+
     Kernel kernel(PAGE_COUNT, PAGE_SIZE);
 
     bool ok;
 
     if (!fs::exists(programsDirectory)) {
-        cout << "Programs directory does not exist\n";
+        kernel.log("Programs directory does not exist");
+        if (!isGitlabCI) {
+            getch();
+        }
+        endwin();
         return 0;
     }
 
@@ -1052,34 +1151,30 @@ int main() {
         string extension = filePath.extension().string();
         
         if (extension != ".asm") {
-            cout << " File not loaded as it is not an .asm file: " << fileName << "\n";
+            kernel.log(" File not loaded as it is not an .asm file: " + fileName);
             continue;
         }
 
         ok = kernel.loadProgram(programsDirectory, fileName, REGISTER_COUNT);
         
         if (!ok) {
-            cout << "Error while loading .asm file: " << fileName <<"\n";
+            kernel.log("Error while loading .asm file: " + fileName);
         } else {
-            cout << "Succesfully loaded .asm file: " << fileName <<"\n";
+            kernel.log("Succesfully loaded .asm file: " + fileName);
         }
     }
 
-    cout << "Programs loaded succesfully" << "\n";
-    
-    bool isGitlabCI = checkGitLabCI();
+    kernel.log("Programs loaded succesfully");
 
-    if (isGitlabCI) {
-        ok = kernel.startExecution(MAX_TEST_INSTRUCTIONS);
-    } else {
-        ok = kernel.startExecution();
-    }
+    ok = kernel.startExecution();
 
     if (ok) {
-        cout << "All programs executed succesfully" << "\n";
+        kernel.log("All programs executed succesfully");
     } else {
-        cout << "Error during exectuion" << "\n";
+        kernel.log("Error during exectuion");
     }
+
+    endwin();
 
     return 0;
 };
