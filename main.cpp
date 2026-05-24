@@ -1125,6 +1125,9 @@ const string programsDirectory = "programs/";
 namespace fs = filesystem;
 
 int main() {
+    bool isGitlabCI = checkGitLabCI();
+    if (isGitlabCI) return 0;
+
     initscr();
     noecho();
     curs_set(0);
@@ -1132,7 +1135,6 @@ int main() {
     Kernel kernel(PAGE_COUNT, PAGE_SIZE);
 
     bool ok;
-    bool isGitlabCI = checkGitLabCI();
 
     if (!fs::exists(programsDirectory)) {
         kernel.log("Programs directory does not exist");
@@ -1164,20 +1166,12 @@ int main() {
 
     kernel.log("Programs loaded succesfully");
 
-    if (isGitlabCI) {
-        ok = kernel.startExecution(MAX_TEST_INSTRUCTIONS);
-    } else {
-        ok = kernel.startExecution();
-    }
+    ok = kernel.startExecution();
 
     if (ok) {
         kernel.log("All programs executed succesfully");
     } else {
         kernel.log("Error during exectuion");
-    }
-
-    if (!isGitlabCI) {
-        getch();
     }
 
     endwin();
