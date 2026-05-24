@@ -1,6 +1,9 @@
 # Prerequisites
 *.d
 
+.agents/
+.codex/
+
 # Compiled Object files
 *.slo
 *.lo
